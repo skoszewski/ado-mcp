@@ -22,9 +22,23 @@ type Client struct {
 
 // RequestError reports a failed request, carrying the message Azure DevOps answered with.
 type RequestError struct {
-	URL     string
-	Status  string
-	Message string
+	URL        string
+	StatusCode int
+	Status     string
+	Message    string
+}
+
+// Unauthorized reports whether Azure DevOps refused the request for the authenticated identity.
+func (e *RequestError) Unauthorized() bool {
+	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden ||
+		e.StatusCode == http.StatusNonAuthoritativeInfo
+}
+
+// NotFound reports whether Azure DevOps answered that the requested resource does not exist,
+// which it also answers for a resource the identity is not allowed to see. A missing project is
+// reported as 400 with error code TF200016.
+func (e *RequestError) NotFound() bool {
+	return e.StatusCode == http.StatusNotFound || strings.HasPrefix(e.Message, "TF200016:")
 }
 
 func (e *RequestError) Error() string {
@@ -79,12 +93,16 @@ func (c *Client) get(ctx context.Context, requestURL string, authorize bool) ([]
 	if err != nil {
 		return nil, nil, fmt.Errorf("request to %s failed: %w", requestURL, err)
 	}
-	if response.StatusCode >= 300 {
+	// Azure DevOps answers a request whose credentials it does not accept with 203 and an HTML
+	// sign-in page rather than with 401.
+	if response.StatusCode >= 300 || response.StatusCode == http.StatusNonAuthoritativeInfo {
 		var failure struct {
 			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(body, &failure)
-		return nil, nil, &RequestError{URL: requestURL, Status: response.Status, Message: failure.Message}
+		return nil, nil, &RequestError{
+			URL: requestURL, StatusCode: response.StatusCode, Status: response.Status, Message: failure.Message,
+		}
 	}
 	return body, response.Header, nil
 }

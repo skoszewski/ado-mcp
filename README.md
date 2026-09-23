@@ -48,14 +48,14 @@ Requires Go 1.27.
 
 ```bash
 go build -o ado-mcp ./cmd/ado-mcp
-./ado-mcp -O myorg
+./ado-mcp
 ```
 
 The MCP endpoint is then `http://127.0.0.1:8888/mcp`. For a client that starts the server
 itself, use the stdio transport:
 
 ```bash
-./ado-mcp --transport stdio -O myorg
+./ado-mcp --transport stdio
 ```
 
 ## Running in a container
@@ -64,7 +64,7 @@ The scripts use Docker when it is installed and Apple `container` otherwise.
 
 ```bash
 scripts/build.sh
-scripts/run.sh -O myorg
+scripts/run.sh
 ```
 
 `scripts/run.sh` publishes the server on `127.0.0.1:8888` and passes its arguments to
@@ -76,10 +76,6 @@ calling shell. `IMAGE` overrides the image name (`ado-mcp:latest`) and `PORT` th
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--organization`, `--org`, `-O` | | Serve this organization only, by name or `https://dev.azure.com/<org>` URL |
-| `--project`, `-p` | | Serve this project only |
-| `--folder-name`, `-f` | | Serve this pipeline folder and the folders below it only |
-| `--pipeline`, `-n` | | Serve this pipeline only, by name or ID; requires `-O` and `-p` |
 | `--transport` | `http` | `http` (Streamable HTTP) or `stdio` |
 | `--host` | `127.0.0.1` | Address the HTTP server binds to; the container image sets `0.0.0.0` |
 | `--port` | `8888` | HTTP port |
@@ -87,10 +83,6 @@ calling shell. `IMAGE` overrides the image name (`ado-mcp:latest`) and `PORT` th
 | `--max-log-lines` | `2000` | Maximum lines `ado_get_run_log` and `ado_get_repository_item` return in one call |
 | `--optimize` | | `small-model` makes `ado_get_run_log` return the whole log or its last `--max-log-lines` lines; `log-type=job\|task\|all` sets the log type `ado_list_run_logs` lists by default (`job`) |
 | `--debug[=N]` | `0` | `1` logs tool calls, `2` adds incoming HTTP requests, `3` adds the MCP library's own logging |
-
-The scope flags are fixed for the server's lifetime. They are announced to the client at
-initialize, and every call is checked against them: a call naming anything outside the scope
-is refused.
 
 ## Client configuration
 
@@ -114,7 +106,7 @@ stdio:
   "mcpServers": {
     "azure-devops": {
       "command": "/path/to/ado-mcp",
-      "args": ["--transport", "stdio", "-O", "myorg"],
+      "args": ["--transport", "stdio"],
       "env": { "AZURE_DEVOPS_PAT": "<token>" }
     }
   }

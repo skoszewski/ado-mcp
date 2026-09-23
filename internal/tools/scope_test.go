@@ -42,45 +42,19 @@ func TestInFolder(t *testing.T) {
 }
 
 func TestResolveScope(t *testing.T) {
-	unrestricted := Limits{}
-	if _, _, err := unrestricted.resolveScope("", "p", true); err == nil || !strings.HasPrefix(err.Error(), "no organization given") {
+	if _, _, err := resolveScope("", "p", true); err == nil || !strings.HasPrefix(err.Error(), "no organization given") {
 		t.Errorf("missing organization: got %v", err)
 	}
-	if _, _, err := unrestricted.resolveScope("org", "", true); err == nil || !strings.HasPrefix(err.Error(), "no project given") {
+	if _, _, err := resolveScope("org", "", true); err == nil || !strings.HasPrefix(err.Error(), "no project given") {
 		t.Errorf("missing project: got %v", err)
 	}
-	orgURL, project, err := unrestricted.resolveScope("org", "", false)
+	orgURL, project, err := resolveScope("org", "", false)
 	if err != nil || orgURL != "https://dev.azure.com/org" || project != "" {
 		t.Errorf("project not needed: got %q %q %v", orgURL, project, err)
 	}
-
-	limited := Limits{Organization: "https://dev.azure.com/Org", Project: "Proj"}
-	orgURL, project, err = limited.resolveScope("org", "proj", true)
-	if err != nil || orgURL != "https://dev.azure.com/Org" || project != "Proj" {
-		t.Errorf("case-insensitive match: got %q %q %v", orgURL, project, err)
-	}
-	orgURL, project, err = limited.resolveScope("", "", true)
-	if err != nil || orgURL != limited.Organization || project != limited.Project {
-		t.Errorf("filled from limits: got %q %q %v", orgURL, project, err)
-	}
-	if _, _, err := limited.resolveScope("other", "", true); err == nil || !strings.Contains(err.Error(), "out of reach") {
-		t.Errorf("other organization: got %v", err)
-	}
-	if _, _, err := limited.resolveScope("", "other", true); err == nil || !strings.Contains(err.Error(), "out of reach") {
-		t.Errorf("other project: got %v", err)
-	}
-}
-
-func TestResolveFolder(t *testing.T) {
-	limited := Limits{FolderName: `\lab`}
-	if got, err := limited.resolveFolder(""); err != nil || got != `\lab` {
-		t.Errorf("omitted folder: got %q %v", got, err)
-	}
-	if got, err := limited.resolveFolder("lab/dev"); err != nil || got != `\lab\dev` {
-		t.Errorf("folder inside limit: got %q %v", got, err)
-	}
-	if _, err := limited.resolveFolder("other"); err == nil {
-		t.Error("folder outside limit: expected an error")
+	orgURL, project, err = resolveScope("https://dev.azure.com/org", "proj", true)
+	if err != nil || orgURL != "https://dev.azure.com/org" || project != "proj" {
+		t.Errorf("full URL: got %q %q %v", orgURL, project, err)
 	}
 }
 

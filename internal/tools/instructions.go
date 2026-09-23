@@ -1,10 +1,5 @@
 package tools
 
-import (
-	"fmt"
-	"strings"
-)
-
 const instructionsOverview = `Read-only access to Azure DevOps pipeline inventory and run history, and to the Git
 repositories those runs build.
 
@@ -57,13 +52,8 @@ as that run saw it rather than as it stands now. For when a change landed and wh
 ado_list_commits with item_path set to the one file, then ado_get_commit_changes on a commit it
 reports. ado_list_commits pages on next_skip rather than on a cursor.`
 
-const instructionsLimits = `This server reaches %s and nothing else, for its whole lifetime. A call that names
-anything outside that scope is refused, and one that names nothing is answered from within it.
-When the user asks about something out of reach, say so rather than looking for a way
-around.`
-
-const instructionsUnrestricted = `This server is confined to no particular organization or project, and remembers nothing
-between calls, so every call carries the organization and project it applies to. Keeping track
+const instructionsScope = `This server remembers nothing between calls, so every call carries the organization and
+project it applies to. Keeping track
 of what you were told is your job, not the user's, but that is not licence to fill a gap with a
 guess: as the conversation settles on an organization, a project, a folder, a pipeline and a
 run, hold on to each one and pass it into every later call, so the user never has to repeat it.
@@ -71,26 +61,11 @@ Keep using that scope until the user points somewhere else, and change only the 
 actually changed -- naming a different pipeline does not change the project. If you have lost
 track, the last result you received restates the organization and project it came from.`
 
-// Instructions returns the server instructions sent at initialize, announcing the scope the
-// server serves.
-func Instructions(limits Limits) string {
-	var named []string
-	if limits.Organization != "" {
-		named = append(named, "organization "+limits.Organization)
-	}
-	if limits.Project != "" {
-		named = append(named, "project "+limits.Project)
-	}
-	if limits.FolderName != "" {
-		named = append(named, "folder "+limits.FolderName+" and below")
-	}
-	if limits.PipelineID != 0 {
-		named = append(named, fmt.Sprintf("pipeline %s (id %d) alone", limits.PipelineName, limits.PipelineID))
-	}
+const instructionsAccess = `Azure DevOps decides what this server can reach: every call runs as one identity, and a
+request for something that identity cannot see fails. The user may ask about an organization,
+project, pipeline or repository that is out of its reach. When a result says access was refused,
+or that something does not exist although its name is right, tell the user this server cannot
+reach it rather than looking for a way around it or answering from guesswork.`
 
-	scope := instructionsUnrestricted
-	if len(named) > 0 {
-		scope = fmt.Sprintf(instructionsLimits, strings.Join(named, ", "))
-	}
-	return instructionsOverview + "\n\n" + scope
-}
+// Instructions are the server instructions sent to the client at initialize.
+const Instructions = instructionsOverview + "\n\n" + instructionsScope + "\n\n" + instructionsAccess

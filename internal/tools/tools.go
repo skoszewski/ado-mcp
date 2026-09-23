@@ -36,45 +36,45 @@ type repositoryArg struct {
 	Repository string `json:"repository" jsonschema:"repository name or ID, as ado_list_repositories reports it, or the repository_name from ado_get_run."`
 }
 
-// handlers implements the tools, bound to the client and the scope they may reach.
+// handlers implements the tools on top of an Azure DevOps client.
 type handlers struct {
 	client        *ado.Client
-	limits        Limits
 	maxLogLines   int
 	optimizations Optimizations
 }
 
 // Register adds every Azure DevOps tool to server and returns their names in registration
 // order.
-func Register(server *mcp.Server, client *ado.Client, limits Limits, maxLogLines int, optimizations Optimizations) []string {
-	h := &handlers{client: client, limits: limits, maxLogLines: maxLogLines, optimizations: optimizations}
+func Register(server *mcp.Server, client *ado.Client, maxLogLines int, optimizations Optimizations) []string {
+	h := &handlers{client: client, maxLogLines: maxLogLines, optimizations: optimizations}
 	return []string{
-		addTool(server, "ado_list_projects", listProjectsDescription, nil, h.listProjects),
-		addTool(server, "ado_list_folders", listFoldersDescription, nil, h.listFolders),
-		addTool(server, "ado_list_pipelines", listPipelinesDescription, map[string]any{"recursive": true}, h.listPipelines),
-		addTool(server, "ado_get_pipeline", getPipelineDescription, nil, h.getPipeline),
-		addTool(server, "ado_list_runs", listRunsDescription, map[string]any{"top": defaultRunCount}, h.listRuns),
-		addTool(server, "ado_get_run", getRunDescription, nil, h.getRun),
-		addTool(server, "ado_get_run_timeline", getRunTimelineDescription, map[string]any{"log_type": "all"}, h.getRunTimeline),
-		addTool(server, "ado_list_run_logs", listRunLogsDescription, nil, h.listRunLogs),
-		addTool(server, "ado_get_run_log", getRunLogDescription,
+		addTool(h, server, "ado_list_projects", listProjectsDescription, nil, h.listProjects),
+		addTool(h, server, "ado_list_folders", listFoldersDescription, nil, h.listFolders),
+		addTool(h, server, "ado_list_pipelines", listPipelinesDescription, map[string]any{"recursive": true}, h.listPipelines),
+		addTool(h, server, "ado_get_pipeline", getPipelineDescription, nil, h.getPipeline),
+		addTool(h, server, "ado_list_runs", listRunsDescription, map[string]any{"top": defaultRunCount}, h.listRuns),
+		addTool(h, server, "ado_get_run", getRunDescription, nil, h.getRun),
+		addTool(h, server, "ado_get_run_timeline", getRunTimelineDescription, map[string]any{"log_type": "all"}, h.getRunTimeline),
+		addTool(h, server, "ado_list_run_logs", listRunLogsDescription, nil, h.listRunLogs),
+		addTool(h, server, "ado_get_run_log", getRunLogDescription,
 			map[string]any{"start_line": 1, "line_count": defaultLineCount, "strip_noise": true}, h.getRunLog),
-		addTool(server, "ado_list_repositories", listRepositoriesDescription, nil, h.listRepositories),
-		addTool(server, "ado_get_repository_item", getRepositoryItemDescription,
+		addTool(h, server, "ado_list_repositories", listRepositoriesDescription, nil, h.listRepositories),
+		addTool(h, server, "ado_get_repository_item", getRepositoryItemDescription,
 			map[string]any{"ref_type": "branch", "start_line": 1, "line_count": defaultLineCount}, h.getRepositoryItem),
-		addTool(server, "ado_list_repository_items", listRepositoryItemsDescription,
+		addTool(h, server, "ado_list_repository_items", listRepositoryItemsDescription,
 			map[string]any{"scope_path": "/", "recursion_level": "oneLevel", "ref_type": "branch"}, h.listRepositoryItems),
-		addTool(server, "ado_list_commits", listCommitsDescription,
+		addTool(h, server, "ado_list_commits", listCommitsDescription,
 			map[string]any{"ref_type": "branch", "top": defaultCommitCount}, h.listCommits),
-		addTool(server, "ado_get_commit_changes", getCommitChangesDescription, nil, h.getCommitChanges),
+		addTool(h, server, "ado_get_commit_changes", getCommitChangesDescription, nil, h.getCommitChanges),
 	}
 }
 
 // addTool registers handler as the tool name. The input schema is inferred from In, with the
 // given property defaults, which the SDK fills into the arguments before they are decoded, and
 // with a pipeline property accepting a name or a numeric ID. Every call is logged at debug
-// level, and a handler error reaches the caller as a tool error result.
-func addTool[In, Out any](server *mcp.Server, name, description string, defaults map[string]any, handler func(context.Context, In) (Out, error)) string {
+// level, and a handler error reaches the caller as a tool error result, with an Azure DevOps
+// refusal rewritten into guidance for the model.
+func addTool[In, Out any](h *handlers, server *mcp.Server, name, description string, defaults map[string]any, handler func(context.Context, In) (Out, error)) string {
 	schema, err := jsonschema.For[In](nil)
 	if err != nil {
 		panic(fmt.Sprintf("tool %s: %v", name, err))
@@ -97,10 +97,28 @@ func addTool[In, Out any](server *mcp.Server, name, description string, defaults
 			output, err := handler(ctx, input)
 			if err != nil {
 				slog.Debug("tool failed", "tool", name, "error", err)
+				err = h.explainError(err)
 			}
 			return nil, output, err
 		})
 	return name
+}
+
+// explainError rewrites an Azure DevOps refusal or not-found answer into a message telling the
+// model the request is out of reach for the authenticated identity.
+func (h *handlers) explainError(err error) error {
+	var requestError *ado.RequestError
+	if !errors.As(err, &requestError) {
+		return err
+	}
+	switch {
+	case requestError.Unauthorized():
+		return fmt.Errorf(accessDeniedMessage, h.client.Auth.Method(), requestError)
+	case requestError.NotFound():
+		return fmt.Errorf(notFoundMessage, requestError, h.client.Auth.Method())
+	default:
+		return err
+	}
 }
 
 // optional returns nil for an empty string, which a result reports as null.
@@ -124,7 +142,7 @@ type listProjectsOutput struct {
 }
 
 func (h *handlers) listProjects(ctx context.Context, in listProjectsInput) (listProjectsOutput, error) {
-	orgURL, _, err := h.limits.resolveScope(in.Organization, "", false)
+	orgURL, _, err := resolveScope(in.Organization, "", false)
 	if err != nil {
 		return listProjectsOutput{}, err
 	}
@@ -133,11 +151,6 @@ func (h *handlers) listProjects(ctx context.Context, in listProjectsInput) (list
 	})
 	if err != nil {
 		return listProjectsOutput{}, err
-	}
-	if h.limits.Project != "" {
-		projects = slices.DeleteFunc(projects, func(project ado.Project) bool {
-			return !strings.EqualFold(project.Name, h.limits.Project)
-		})
 	}
 	return listProjectsOutput{Organization: orgURL, NextCursor: next, Projects: projects}, nil
 }
@@ -160,7 +173,7 @@ type listFoldersOutput struct {
 }
 
 func (h *handlers) listFolders(ctx context.Context, in listFoldersInput) (listFoldersOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return listFoldersOutput{}, err
 	}
@@ -200,14 +213,11 @@ type listPipelinesOutput struct {
 }
 
 func (h *handlers) listPipelines(ctx context.Context, in listPipelinesInput) (listPipelinesOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return listPipelinesOutput{}, err
 	}
-	folderName, err := h.limits.resolveFolder(in.FolderName)
-	if err != nil {
-		return listPipelinesOutput{}, err
-	}
+	folderName := NormalizeFolderPath(in.FolderName)
 	// Filtered here rather than through the API's own path parameter, which matches one folder
 	// exactly and drops a definition whose name is shared by another in the same folder.
 	definitions, next, err := collectPages(in.Top, in.Cursor, func(top int, cursor string) ([]ado.Definition, string, error) {
@@ -250,11 +260,11 @@ type getPipelineOutput struct {
 }
 
 func (h *handlers) getPipeline(ctx context.Context, in getPipelineInput) (getPipelineOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return getPipelineOutput{}, err
 	}
-	pipelineID, _, err := h.limits.resolvePipeline(ctx, h.client, orgURL, project, pipelineArgument(in.Pipeline), false)
+	pipelineID, _, err := resolvePipeline(ctx, h.client, orgURL, project, pipelineArgument(in.Pipeline), false)
 	if err != nil {
 		return getPipelineOutput{}, err
 	}
@@ -325,11 +335,11 @@ type listRunsOutput struct {
 }
 
 func (h *handlers) listRuns(ctx context.Context, in listRunsInput) (listRunsOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return listRunsOutput{}, err
 	}
-	pipelineID, pipelineName, err := h.limits.resolvePipeline(ctx, h.client, orgURL, project, pipelineArgument(in.Pipeline), true)
+	pipelineID, pipelineName, err := resolvePipeline(ctx, h.client, orgURL, project, pipelineArgument(in.Pipeline), true)
 	if err != nil {
 		return listRunsOutput{}, err
 	}
@@ -371,7 +381,7 @@ type getRunOutput struct {
 }
 
 func (h *handlers) getRun(ctx context.Context, in runInput) (getRunOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return getRunOutput{}, err
 	}
@@ -408,7 +418,7 @@ type getRunTimelineOutput struct {
 }
 
 func (h *handlers) getRunTimeline(ctx context.Context, in getRunTimelineInput) (getRunTimelineOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return getRunTimelineOutput{}, err
 	}
@@ -465,7 +475,7 @@ func (h *handlers) runLogs(ctx context.Context, orgURL, project string, runID in
 }
 
 func (h *handlers) listRunLogs(ctx context.Context, in listRunLogsInput) (listRunLogsOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return listRunLogsOutput{}, err
 	}
@@ -521,7 +531,7 @@ type getRunLogOutput struct {
 }
 
 func (h *handlers) getRunLog(ctx context.Context, in getRunLogInput) (getRunLogOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return getRunLogOutput{}, err
 	}
@@ -571,7 +581,7 @@ type listRepositoriesOutput struct {
 }
 
 func (h *handlers) listRepositories(ctx context.Context, in scopeArgs) (listRepositoriesOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return listRepositoriesOutput{}, err
 	}
@@ -609,7 +619,7 @@ type getRepositoryItemOutput struct {
 }
 
 func (h *handlers) getRepositoryItem(ctx context.Context, in getRepositoryItemInput) (getRepositoryItemOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return getRepositoryItemOutput{}, err
 	}
@@ -665,7 +675,7 @@ type listRepositoryItemsOutput struct {
 }
 
 func (h *handlers) listRepositoryItems(ctx context.Context, in listRepositoryItemsInput) (listRepositoryItemsOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return listRepositoryItemsOutput{}, err
 	}
@@ -721,7 +731,7 @@ type listCommitsOutput struct {
 }
 
 func (h *handlers) listCommits(ctx context.Context, in listCommitsInput) (listCommitsOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return listCommitsOutput{}, err
 	}
@@ -785,7 +795,7 @@ type getCommitChangesOutput struct {
 }
 
 func (h *handlers) getCommitChanges(ctx context.Context, in getCommitChangesInput) (getCommitChangesOutput, error) {
-	orgURL, project, err := h.limits.resolveScope(in.Organization, in.Project, true)
+	orgURL, project, err := resolveScope(in.Organization, in.Project, true)
 	if err != nil {
 		return getCommitChangesOutput{}, err
 	}

@@ -91,5 +91,18 @@ const getCommitChangesDescription = `List the paths one commit changed.
 Use this once ado_list_commits has identified a commit worth looking at, to see what it
 touched before reading any of those files with ado_get_repository_item.`
 
+const accessDeniedMessage = `Azure DevOps refused this request for the identity this server authenticates as (%s):
+%s
+That identity has no access to what this call names, so it is out of reach through these tools.
+Tell the user so, naming what was refused, instead of retrying with other names or answering
+from guesswork.`
+
+const notFoundMessage = `Azure DevOps reports that what this call names does not exist:
+%s
+It answers the same way when the identity this server authenticates as (%s) is not allowed to
+see it, so this is either a wrong name or no access. Check the name against ado_list_projects, ado_list_pipelines or
+ado_list_repositories before concluding. If the name is right, tell the user this server cannot
+reach it instead of guessing.`
+
 const folderPathMessage = `'%s' is a folder, not a file, so it has no content to read. Use ado_list_repository_items
 with scope_path set to that path to list what it holds, then read one of the files it reports.`

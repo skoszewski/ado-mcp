@@ -40,9 +40,8 @@ const usageText = `Usage: ado-mcp [flags]
 Run an MCP server exposing Azure DevOps pipeline inventory and run history -- projects, folders,
 pipelines, runs, run timelines and run logs -- plus the Git repositories those runs build.
 
-The organization, project, folder and pipeline flags confine the server to that scope: a tool
-call that names anything outside it is refused. Given none, the server reaches whatever the
-signed-in identity can.
+Every tool call names the organization and project it applies to, and reaches whatever the
+authenticated identity is authorized for in Azure DevOps.
 
 Authentication, first match wins:
   AZURE_DEVOPS_PAT                                          personal access token
@@ -55,15 +54,8 @@ Flags:
 const usageExamples = `
 Examples:
   ado-mcp
-  ado-mcp -O myorg -p myproject
-  ado-mcp -O myorg -p myproject -f token-all-tokens
-  ado-mcp -O myorg -p myproject -n deploy-token-prod-tokens
-  ado-mcp -O myorg -p myproject --port 9000 --path /ado
-  ado-mcp --transport stdio -O myorg
-
-The server is stateless, and the scope given here is fixed for its lifetime: it is announced to
-the client at initialize and enforced on every call, so restart the server to work against a
-different organization, project, folder or pipeline.
+  ado-mcp --port 9000 --path /ado
+  ado-mcp --transport stdio
 `
 
 var debugDescriptions = map[int]string{
@@ -97,10 +89,6 @@ func (d *debugLevel) IsBoolFlag() bool {
 }
 
 type options struct {
-	organization  string
-	project       string
-	folderName    string
-	pipeline      string
 	transport     string
 	host          string
 	port          int
@@ -119,18 +107,6 @@ func parseFlags() options {
 		fmt.Fprint(flags.Output(), usageExamples)
 	}
 
-	for _, name := range []string{"organization", "org", "O"} {
-		flags.StringVar(&opts.organization, name, "", "serve this Azure DevOps organization only, by name or full URL (https://dev.azure.com/<org>)")
-	}
-	for _, name := range []string{"project", "p"} {
-		flags.StringVar(&opts.project, name, "", "serve this Azure DevOps project only")
-	}
-	for _, name := range []string{"folder-name", "f"} {
-		flags.StringVar(&opts.folderName, name, "", "serve this pipeline folder and the folders below it only")
-	}
-	for _, name := range []string{"pipeline", "n"} {
-		flags.StringVar(&opts.pipeline, name, "", "serve this pipeline only, by name or ID; requires --organization and --project")
-	}
 	flags.StringVar(&opts.transport, "transport", "http", "MCP transport: http (Streamable HTTP) or stdio")
 	flags.StringVar(&opts.host, "host", "127.0.0.1", "address to bind the HTTP server to")
 	flags.IntVar(&opts.port, "port", 8888, "port the HTTP server listens on")
@@ -191,17 +167,13 @@ func run(opts options) error {
 		return err
 	}
 	client := &ado.Client{HTTP: &http.Client{Timeout: httpTimeout}, Auth: authorizer}
-	limits, err := tools.ResolveLimits(ctx, client, opts.organization, opts.project, opts.folderName, opts.pipeline)
-	if err != nil {
-		return err
-	}
 
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: serverName, Version: version},
-		&mcp.ServerOptions{Instructions: tools.Instructions(limits), Logger: sdkLogger},
+		&mcp.ServerOptions{Instructions: tools.Instructions, Logger: sdkLogger},
 	)
-	toolNames := tools.Register(server, client, limits, opts.maxLogLines, opts.optimizations)
-	printBanner(opts, limits, client.Auth.Method(), toolNames)
+	toolNames := tools.Register(server, client, opts.maxLogLines, opts.optimizations)
+	printBanner(opts, client.Auth.Method(), toolNames)
 
 	if opts.transport == "stdio" {
 		return server.Run(ctx, &mcp.StdioTransport{})
@@ -243,7 +215,7 @@ func serveHTTP(ctx context.Context, server *mcp.Server, opts options, sdkLogger 
 }
 
 // printBanner reports the scope, the tools and the endpoint on stderr before any request.
-func printBanner(opts options, limits tools.Limits, authMethod string, toolNames []string) {
+func printBanner(opts options, authMethod string, toolNames []string) {
 	lines := []string{
 		"==========================================",
 		"Serving Azure DevOps Pipelines over MCP",
@@ -256,18 +228,6 @@ func printBanner(opts options, limits tools.Limits, authMethod string, toolNames
 	}
 	if opts.debug > 0 {
 		lines = append(lines, "  Debug: "+debugDescriptions[int(opts.debug)])
-	}
-	if limits.Organization != "" {
-		lines = append(lines, fmt.Sprintf("  Organization: %s (only)", limits.Organization))
-	}
-	if limits.Project != "" {
-		lines = append(lines, fmt.Sprintf("  Project: %s (only)", limits.Project))
-	}
-	if limits.FolderName != "" {
-		lines = append(lines, fmt.Sprintf("  Folder: %s and below (only)", limits.FolderName))
-	}
-	if limits.PipelineID != 0 {
-		lines = append(lines, fmt.Sprintf("  Pipeline: %s (%d) (only)", limits.PipelineName, limits.PipelineID))
 	}
 	lines = append(lines, fmt.Sprintf("  Tools (%d):", len(toolNames)))
 	for _, name := range toolNames {
