@@ -58,12 +58,6 @@ Examples:
   ado-mcp --transport stdio
 `
 
-var debugDescriptions = map[int]string{
-	debugToolCalls: "logging every tool call with its arguments",
-	debugRequests:  "logging every tool call with its arguments, and each HTTP request",
-	debugSDK:       "logging every tool call, each HTTP request, and the MCP library's own output",
-}
-
 // debugLevel is the --debug flag: a bare --debug sets level 1, --debug=N sets level N.
 type debugLevel int
 
@@ -132,8 +126,15 @@ request, and 3 adds the MCP library's own logging, which dumps raw protocol traf
 }
 
 func main() {
-	if err := run(parseFlags()); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	opts := parseFlags()
+	level := slog.LevelInfo
+	if opts.debug > 0 {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+
+	if err := run(opts); err != nil {
+		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}
 }
@@ -149,11 +150,6 @@ func run(opts options) error {
 		return errors.New("--max-log-lines must be at least 1")
 	}
 
-	level := slog.LevelInfo
-	if opts.debug > 0 {
-		level = slog.LevelDebug
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	var sdkLogger *slog.Logger
 	if opts.debug >= debugSDK {
 		sdkLogger = slog.Default()
@@ -173,7 +169,9 @@ func run(opts options) error {
 		&mcp.ServerOptions{Instructions: tools.Instructions, Logger: sdkLogger},
 	)
 	toolNames := tools.Register(server, client, opts.maxLogLines, opts.optimizations)
-	printBanner(opts, client.Auth.Method(), toolNames)
+	slog.Info("starting server", "version", version, "transport", opts.transport,
+		"authentication", client.Auth.Method(), "optimize", opts.optimizations.String(),
+		"debug", int(opts.debug), "tools", strings.Join(toolNames, ","))
 
 	if opts.transport == "stdio" {
 		return server.Run(ctx, &mcp.StdioTransport{})
@@ -190,7 +188,7 @@ func serveHTTP(ctx context.Context, server *mcp.Server, opts options, sdkLogger 
 	if opts.debug >= debugRequests {
 		next := handler
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			slog.Info("request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
+			slog.Info("http request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -198,6 +196,7 @@ func serveHTTP(ctx context.Context, server *mcp.Server, opts options, sdkLogger 
 	mux.Handle(opts.path, handler)
 
 	httpServer := &http.Server{Addr: net.JoinHostPort(opts.host, strconv.Itoa(opts.port)), Handler: mux}
+	slog.Info("listening", "endpoint", "http://"+httpServer.Addr+opts.path)
 	failed := make(chan error, 1)
 	go func() {
 		failed <- httpServer.ListenAndServe()
@@ -208,35 +207,8 @@ func serveHTTP(ctx context.Context, server *mcp.Server, opts options, sdkLogger 
 		return err
 	case <-ctx.Done():
 	}
-	fmt.Fprintln(os.Stderr, "\n  Stopping server")
+	slog.Info("stopping server")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return httpServer.Shutdown(shutdownCtx)
-}
-
-// printBanner reports the scope, the tools and the endpoint on stderr before any request.
-func printBanner(opts options, authMethod string, toolNames []string) {
-	lines := []string{
-		"==========================================",
-		"Serving Azure DevOps Pipelines over MCP",
-		"==========================================",
-		"  Version: " + version,
-		"  Authentication: " + authMethod,
-	}
-	if description := opts.optimizations.String(); description != "" {
-		lines = append(lines, "  Optimize: "+description)
-	}
-	if opts.debug > 0 {
-		lines = append(lines, "  Debug: "+debugDescriptions[int(opts.debug)])
-	}
-	lines = append(lines, fmt.Sprintf("  Tools (%d):", len(toolNames)))
-	for _, name := range toolNames {
-		lines = append(lines, "    - "+name)
-	}
-	if opts.transport == "stdio" {
-		lines = append(lines, "  Transport: stdio")
-	} else {
-		lines = append(lines, fmt.Sprintf("  Endpoint: http://%s%s", net.JoinHostPort(opts.host, strconv.Itoa(opts.port)), opts.path))
-	}
-	fmt.Fprintln(os.Stderr, strings.Join(lines, "\n")+"\n")
 }

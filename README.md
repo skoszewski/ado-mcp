@@ -33,7 +33,7 @@ The first method whose environment variables are set is used:
 3. None of the above - the identity signed in to the Azure CLI (`az login`). The container image
    does not include the Azure CLI, so this method works only with the local binary.
 
-The method in use is printed at startup. A personal access token needs these scopes:
+The method in use is logged at startup. A personal access token needs these scopes:
 
 - Project and Team: Read
 - Build: Read
