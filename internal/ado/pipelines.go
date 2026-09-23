@@ -1,0 +1,137 @@
+package ado
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
+)
+
+// Project is an Azure DevOps project.
+type Project struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	State       *string `json:"state"`
+	Visibility  *string `json:"visibility"`
+	Description *string `json:"description"`
+}
+
+// Folder is a pipeline (build definition) folder.
+type Folder struct {
+	Path        *string `json:"path"`
+	Description *string `json:"description"`
+	CreatedOn   *string `json:"createdOn"`
+}
+
+// Definition is a pipeline (build definition).
+type Definition struct {
+	ID          int     `json:"id"`
+	Name        string  `json:"name"`
+	Path        *string `json:"path"`
+	QueueStatus *string `json:"queueStatus"`
+	Revision    *int    `json:"revision"`
+	Queue       *struct {
+		Name *string `json:"name"`
+	} `json:"queue"`
+}
+
+// QueueName returns the name of the definition's default agent queue, or nil.
+func (d Definition) QueueName() *string {
+	if d.Queue == nil {
+		return nil
+	}
+	return d.Queue.Name
+}
+
+func pageQuery(query url.Values, top int, cursor string) url.Values {
+	if top > 0 {
+		query.Set("$top", strconv.Itoa(top))
+	}
+	if cursor != "" {
+		query.Set("continuationToken", cursor)
+	}
+	return query
+}
+
+// ProjectsPage fetches one page of an organization's projects, returning the continuation
+// token for the next page, or "" on the last one. A top of 0 uses the API's own page size.
+func (c *Client) ProjectsPage(ctx context.Context, orgURL string, top int, cursor string) ([]Project, string, error) {
+	query := pageQuery(url.Values{"api-version": {APIVersion}}, top, cursor)
+	return getPage[Project](ctx, c, orgURL+"/_apis/projects?"+encodeQuery(query))
+}
+
+// Folders fetches the pipeline folders in a project, below path when it is not empty.
+func (c *Client) Folders(ctx context.Context, orgURL, project, path string) ([]Folder, error) {
+	foldersURL := projectURL(orgURL, project) + "/_apis/build/folders"
+	if path != "" {
+		foldersURL += "/" + url.PathEscape(path)
+	}
+	return getValues[Folder](ctx, c, foldersURL+"?queryOrder=folderAscending&api-version=7.1-preview.2")
+}
+
+// DefinitionsPage fetches one page of a project's pipeline definitions.
+//
+// The definitionNameAscending order is what makes this pageable: its continuation token is a
+// definition name, and paging by it returns every definition. Paging the same collection in a
+// timestamp order drops rows, and a continuation token with no order is rejected.
+func (c *Client) DefinitionsPage(ctx context.Context, orgURL, project string, top int, cursor string) ([]Definition, string, error) {
+	query := pageQuery(url.Values{"queryOrder": {"definitionNameAscending"}, "api-version": {APIVersion}}, top, cursor)
+	return getPage[Definition](ctx, c, projectURL(orgURL, project)+"/_apis/build/definitions?"+encodeQuery(query))
+}
+
+// Definition fetches one pipeline definition by its ID.
+func (c *Client) Definition(ctx context.Context, orgURL, project string, id int) (Definition, error) {
+	var definition Definition
+	definitionURL := fmt.Sprintf("%s/_apis/build/definitions/%d?api-version=%s", projectURL(orgURL, project), id, APIVersion)
+	err := c.getJSON(ctx, definitionURL, &definition)
+	return definition, err
+}
+
+// ResolvePipeline resolves a pipeline name or numeric ID to its ID and name. A name that does
+// not exist fails with the closest name matches.
+func (c *Client) ResolvePipeline(ctx context.Context, orgURL, project, pipeline string) (int, string, error) {
+	if id, err := strconv.Atoi(pipeline); err == nil {
+		definition, err := c.Definition(ctx, orgURL, project, id)
+		return id, definition.Name, err
+	}
+
+	var definitions []Definition
+	cursor := ""
+	for {
+		page, next, err := c.DefinitionsPage(ctx, orgURL, project, 0, cursor)
+		if err != nil {
+			return 0, "", err
+		}
+		definitions = append(definitions, page...)
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+
+	for _, definition := range definitions {
+		if definition.Name == pipeline {
+			return definition.ID, definition.Name, nil
+		}
+	}
+
+	lines := []string{
+		fmt.Sprintf("Pipeline '%s' not found", pipeline),
+		fmt.Sprintf("%d pipeline(s) returned for this project. Closest name matches:", len(definitions)),
+	}
+	needle := strings.ToLower(pipeline)
+	for _, definition := range definitions {
+		if len(lines) == 12 {
+			break
+		}
+		if strings.Contains(strings.ToLower(definition.Name), needle) {
+			path := ""
+			if definition.Path != nil {
+				path = *definition.Path
+			}
+			lines = append(lines, fmt.Sprintf("    %d\t%s\t%s", definition.ID, path, definition.Name))
+		}
+	}
+	return 0, "", fmt.Errorf("%s", strings.Join(lines, "\n"))
+}

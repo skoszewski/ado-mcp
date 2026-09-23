@@ -1,0 +1,282 @@
+// Command ado-mcp serves Azure DevOps pipeline inventory, run history, run logs and Git
+// repositories as MCP tools, over Streamable HTTP or stdio.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/skoszewski/ado-mcp/internal/ado"
+	"github.com/skoszewski/ado-mcp/internal/tools"
+)
+
+// version is set at build time with -ldflags "-X main.version=<version>".
+var version = "dev"
+
+const (
+	serverName      = "ado-mcp"
+	shutdownTimeout = 15 * time.Second
+	httpTimeout     = 2 * time.Minute
+	debugToolCalls  = 1
+	debugRequests   = 2
+	debugSDK        = 3
+)
+
+const usageText = `Usage: ado-mcp [flags]
+
+Run an MCP server exposing Azure DevOps pipeline inventory and run history -- projects, folders,
+pipelines, runs, run timelines and run logs -- plus the Git repositories those runs build.
+
+The organization, project, folder and pipeline flags confine the server to that scope: a tool
+call that names anything outside it is refused. Given none, the server reaches whatever the
+signed-in identity can.
+
+Authentication, first match wins:
+  AZURE_DEVOPS_PAT                                          personal access token
+  AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET     service principal client secret
+  otherwise                                                 the signed-in Azure CLI
+
+Flags:
+`
+
+const usageExamples = `
+Examples:
+  ado-mcp
+  ado-mcp -O myorg -p myproject
+  ado-mcp -O myorg -p myproject -f token-all-tokens
+  ado-mcp -O myorg -p myproject -n deploy-token-prod-tokens
+  ado-mcp -O myorg -p myproject --port 9000 --path /ado
+  ado-mcp --transport stdio -O myorg
+
+The server is stateless, and the scope given here is fixed for its lifetime: it is announced to
+the client at initialize and enforced on every call, so restart the server to work against a
+different organization, project, folder or pipeline.
+`
+
+var debugDescriptions = map[int]string{
+	debugToolCalls: "logging every tool call with its arguments",
+	debugRequests:  "logging every tool call with its arguments, and each HTTP request",
+	debugSDK:       "logging every tool call, each HTTP request, and the MCP library's own output",
+}
+
+// debugLevel is the --debug flag: a bare --debug sets level 1, --debug=N sets level N.
+type debugLevel int
+
+func (d *debugLevel) String() string {
+	return strconv.Itoa(int(*d))
+}
+
+func (d *debugLevel) Set(value string) error {
+	if value == "true" {
+		*d = debugToolCalls
+		return nil
+	}
+	level, err := strconv.Atoi(value)
+	if err != nil || level < 0 || level > debugSDK {
+		return errors.New("must be 0, 1, 2 or 3")
+	}
+	*d = debugLevel(level)
+	return nil
+}
+
+func (d *debugLevel) IsBoolFlag() bool {
+	return true
+}
+
+type options struct {
+	organization  string
+	project       string
+	folderName    string
+	pipeline      string
+	transport     string
+	host          string
+	port          int
+	path          string
+	maxLogLines   int
+	optimizations tools.Optimizations
+	debug         debugLevel
+}
+
+func parseFlags() options {
+	opts := options{optimizations: tools.DefaultOptimizations()}
+	flags := flag.CommandLine
+	flags.Usage = func() {
+		fmt.Fprint(flags.Output(), usageText)
+		flags.PrintDefaults()
+		fmt.Fprint(flags.Output(), usageExamples)
+	}
+
+	for _, name := range []string{"organization", "org", "O"} {
+		flags.StringVar(&opts.organization, name, "", "serve this Azure DevOps organization only, by name or full URL (https://dev.azure.com/<org>)")
+	}
+	for _, name := range []string{"project", "p"} {
+		flags.StringVar(&opts.project, name, "", "serve this Azure DevOps project only")
+	}
+	for _, name := range []string{"folder-name", "f"} {
+		flags.StringVar(&opts.folderName, name, "", "serve this pipeline folder and the folders below it only")
+	}
+	for _, name := range []string{"pipeline", "n"} {
+		flags.StringVar(&opts.pipeline, name, "", "serve this pipeline only, by name or ID; requires --organization and --project")
+	}
+	flags.StringVar(&opts.transport, "transport", "http", "MCP transport: http (Streamable HTTP) or stdio")
+	flags.StringVar(&opts.host, "host", "127.0.0.1", "address to bind the HTTP server to")
+	flags.IntVar(&opts.port, "port", 8888, "port the HTTP server listens on")
+	flags.StringVar(&opts.path, "path", "/mcp", "URL path the MCP endpoint is served at")
+	flags.IntVar(&opts.maxLogLines, "max-log-lines", 2000, "maximum log lines ado_get_run_log may return in one call")
+	flags.Func("optimize", `comma-separated settings the tools adapt their behaviour to, as switches named on their own
+and keys given as name=value, e.g. 'small-model,log-type=task'. small-model suits a client model
+that does not reliably page through a long result: ado_get_run_log then returns the whole log,
+or its last --max-log-lines lines when it is longer than that, instead of the page the call
+asked for. log-type (job, task or all; job by default) sets which logs ado_list_run_logs reports
+when the call does not name one itself -- task lists each step's own log, which is far smaller
+than a job's combined output`, func(value string) error {
+		optimizations, err := tools.ParseOptimizations(value)
+		opts.optimizations = optimizations
+		return err
+	})
+	flags.Var(&opts.debug, "debug", `debug output level, given as --debug or --debug=N: 1 (the level of a bare --debug)
+logs every tool call with the arguments it was given, 2 adds one line per incoming HTTP
+request, and 3 adds the MCP library's own logging, which dumps raw protocol traffic`)
+
+	flag.Parse()
+	return opts
+}
+
+func main() {
+	if err := run(parseFlags()); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run(opts options) error {
+	if opts.transport != "http" && opts.transport != "stdio" {
+		return fmt.Errorf("unknown --transport %q; use http or stdio", opts.transport)
+	}
+	if !strings.HasPrefix(opts.path, "/") {
+		return fmt.Errorf("--path %q must start with /", opts.path)
+	}
+	if opts.maxLogLines < 1 {
+		return errors.New("--max-log-lines must be at least 1")
+	}
+
+	level := slog.LevelInfo
+	if opts.debug > 0 {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	var sdkLogger *slog.Logger
+	if opts.debug >= debugSDK {
+		sdkLogger = slog.Default()
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	authorizer, err := ado.NewAuthorizer(os.Getenv)
+	if err != nil {
+		return err
+	}
+	client := &ado.Client{HTTP: &http.Client{Timeout: httpTimeout}, Auth: authorizer}
+	limits, err := tools.ResolveLimits(ctx, client, opts.organization, opts.project, opts.folderName, opts.pipeline)
+	if err != nil {
+		return err
+	}
+
+	server := mcp.NewServer(
+		&mcp.Implementation{Name: serverName, Version: version},
+		&mcp.ServerOptions{Instructions: tools.Instructions(limits), Logger: sdkLogger},
+	)
+	toolNames := tools.Register(server, client, limits, opts.maxLogLines, opts.optimizations)
+	printBanner(opts, limits, client.Auth.Method(), toolNames)
+
+	if opts.transport == "stdio" {
+		return server.Run(ctx, &mcp.StdioTransport{})
+	}
+	return serveHTTP(ctx, server, opts, sdkLogger)
+}
+
+// serveHTTP serves server as a stateless Streamable HTTP endpoint until ctx is cancelled.
+func serveHTTP(ctx context.Context, server *mcp.Server, opts options, sdkLogger *slog.Logger) error {
+	var handler http.Handler = mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server },
+		&mcp.StreamableHTTPOptions{Stateless: true, Logger: sdkLogger},
+	)
+	if opts.debug >= debugRequests {
+		next := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			slog.Info("request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
+			next.ServeHTTP(w, r)
+		})
+	}
+	mux := http.NewServeMux()
+	mux.Handle(opts.path, handler)
+
+	httpServer := &http.Server{Addr: net.JoinHostPort(opts.host, strconv.Itoa(opts.port)), Handler: mux}
+	failed := make(chan error, 1)
+	go func() {
+		failed <- httpServer.ListenAndServe()
+	}()
+
+	select {
+	case err := <-failed:
+		return err
+	case <-ctx.Done():
+	}
+	fmt.Fprintln(os.Stderr, "\n  Stopping server")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	return httpServer.Shutdown(shutdownCtx)
+}
+
+// printBanner reports the scope, the tools and the endpoint on stderr before any request.
+func printBanner(opts options, limits tools.Limits, authMethod string, toolNames []string) {
+	lines := []string{
+		"==========================================",
+		"Serving Azure DevOps Pipelines over MCP",
+		"==========================================",
+		"  Version: " + version,
+		"  Authentication: " + authMethod,
+	}
+	if description := opts.optimizations.String(); description != "" {
+		lines = append(lines, "  Optimize: "+description)
+	}
+	if opts.debug > 0 {
+		lines = append(lines, "  Debug: "+debugDescriptions[int(opts.debug)])
+	}
+	if limits.Organization != "" {
+		lines = append(lines, fmt.Sprintf("  Organization: %s (only)", limits.Organization))
+	}
+	if limits.Project != "" {
+		lines = append(lines, fmt.Sprintf("  Project: %s (only)", limits.Project))
+	}
+	if limits.FolderName != "" {
+		lines = append(lines, fmt.Sprintf("  Folder: %s and below (only)", limits.FolderName))
+	}
+	if limits.PipelineID != 0 {
+		lines = append(lines, fmt.Sprintf("  Pipeline: %s (%d) (only)", limits.PipelineName, limits.PipelineID))
+	}
+	lines = append(lines, fmt.Sprintf("  Tools (%d):", len(toolNames)))
+	for _, name := range toolNames {
+		lines = append(lines, "    - "+name)
+	}
+	if opts.transport == "stdio" {
+		lines = append(lines, "  Transport: stdio")
+	} else {
+		lines = append(lines, fmt.Sprintf("  Endpoint: http://%s%s", net.JoinHostPort(opts.host, strconv.Itoa(opts.port)), opts.path))
+	}
+	fmt.Fprintln(os.Stderr, strings.Join(lines, "\n")+"\n")
+}
