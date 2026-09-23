@@ -27,7 +27,17 @@ if command -v docker >/dev/null 2>&1; then
 elif command -v container >/dev/null 2>&1; then
     # Apple container needs its background services running before any other command.
     container system status >/dev/null 2>&1 || container system start
-    exec container "${run_args[@]}" "${image}" "$@"
+
+    # Stops the container on INT and TERM.
+    name="ado-mcp-$$"
+    trap 'container stop "${name}" >/dev/null' INT TERM
+    container "${run_args[0]}" --name "${name}" "${run_args[@]:1}" "${image}" "$@" <&0 &
+    client=$!
+    status=0
+    while kill -0 "${client}" 2>/dev/null; do
+        wait "${client}" || status=$?
+    done
+    exit "${status}"
 else
     echo "Error: neither docker nor Apple container is installed" >&2
     exit 1
