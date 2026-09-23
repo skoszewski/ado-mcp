@@ -65,10 +65,8 @@ func pipelineArgument(value any) string {
 	}
 }
 
-// NormalizeFolderPath returns a folder path as the literal path Azure DevOps matches on: a
-// leading backslash and backslash separators. Azure DevOps reports a path without the leading
-// backslash as an empty list rather than an error, so forward slashes and a missing leading
-// backslash are corrected here.
+// NormalizeFolderPath returns a folder path with a leading backslash and backslash separators,
+// the form Azure DevOps matches folder paths in.
 func NormalizeFolderPath(folderName string) string {
 	if folderName == "" {
 		return ""

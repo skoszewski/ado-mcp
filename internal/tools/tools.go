@@ -218,8 +218,6 @@ func (h *handlers) listPipelines(ctx context.Context, in listPipelinesInput) (li
 		return listPipelinesOutput{}, err
 	}
 	folderName := NormalizeFolderPath(in.FolderName)
-	// Filtered here rather than through the API's own path parameter, which matches one folder
-	// exactly and drops a definition whose name is shared by another in the same folder.
 	definitions, next, err := collectPages(in.Top, in.Cursor, func(top int, cursor string) ([]ado.Definition, string, error) {
 		return h.client.DefinitionsPage(ctx, orgURL, project, top, cursor)
 	})
@@ -555,7 +553,6 @@ func (h *handlers) getRunLog(ctx context.Context, in getRunLogInput) (getRunLogO
 
 	output := getRunLogOutput{Organization: orgURL, Project: project, RunID: in.RunID, LogID: in.LogID}
 	if h.optimizations.SmallModel {
-		// A small model tends to answer from the first page, and a failed step's error is at the end.
 		output.linePage = tailLines(lines, h.maxLogLines)
 	} else {
 		output.linePage = pageLines(lines, in.StartLine, in.LineCount, h.maxLogLines)

@@ -67,8 +67,7 @@ func (a patAuthorizer) Method() string {
 }
 
 // tokenAuthorizer authenticates with a Microsoft Entra bearer token from an Azure Identity
-// credential, cached until shortly before it expires. The Azure CLI credential does not cache
-// tokens itself and would otherwise run az on every request.
+// credential, cached until five minutes before it expires.
 type tokenAuthorizer struct {
 	method     string
 	credential azcore.TokenCredential

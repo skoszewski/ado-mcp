@@ -70,11 +70,8 @@ func (c *Client) Folders(ctx context.Context, orgURL, project, path string) ([]F
 	return getValues[Folder](ctx, c, foldersURL+"?queryOrder=folderAscending&api-version=7.1-preview.2")
 }
 
-// DefinitionsPage fetches one page of a project's pipeline definitions.
-//
-// The definitionNameAscending order is what makes this pageable: its continuation token is a
-// definition name, and paging by it returns every definition. Paging the same collection in a
-// timestamp order drops rows, and a continuation token with no order is rejected.
+// DefinitionsPage fetches one page of a project's pipeline definitions in ascending name order,
+// returning the continuation token for the next page, or "" on the last one.
 func (c *Client) DefinitionsPage(ctx context.Context, orgURL, project string, top int, cursor string) ([]Definition, string, error) {
 	query := pageQuery(url.Values{"queryOrder": {"definitionNameAscending"}, "api-version": {APIVersion}}, top, cursor)
 	return getPage[Definition](ctx, c, projectURL(orgURL, project)+"/_apis/build/definitions?"+encodeQuery(query))

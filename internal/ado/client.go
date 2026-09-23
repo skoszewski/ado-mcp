@@ -93,8 +93,7 @@ func (c *Client) get(ctx context.Context, requestURL string, authorize bool) ([]
 	if err != nil {
 		return nil, nil, fmt.Errorf("request to %s failed: %w", requestURL, err)
 	}
-	// Azure DevOps answers a request whose credentials it does not accept with 203 and an HTML
-	// sign-in page rather than with 401.
+	// Azure DevOps answers credentials it does not accept with 203 and an HTML sign-in page.
 	if response.StatusCode >= 300 || response.StatusCode == http.StatusNonAuthoritativeInfo {
 		var failure struct {
 			Message string `json:"message"`

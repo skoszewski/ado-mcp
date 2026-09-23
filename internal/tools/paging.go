@@ -54,9 +54,8 @@ func splitLines(text string) []string {
 	return strings.Split(text, "\n")
 }
 
-// collectPages fetches one page of a collection when top is set, or every remaining page when
-// it is not, so that an unbounded listing is never silently truncated to the API's first page.
-// The returned cursor is nil when nothing remains.
+// collectPages fetches one page of top rows when top is set, or every remaining page when it is
+// not. The returned cursor is nil when nothing remains.
 func collectPages[T any](top int, cursor string, fetch func(top int, cursor string) ([]T, string, error)) ([]T, *string, error) {
 	if top > 0 {
 		rows, next, err := fetch(top, cursor)
