@@ -47,27 +47,26 @@ organization.
 Requires Go 1.27.
 
 ```bash
-go build -o ado-mcp ./cmd/ado-mcp
-./ado-mcp
+scripts/build.sh
+scripts/run.sh
 ```
 
-The MCP endpoint is then `http://127.0.0.1:8888/mcp`. For a client that starts the server
-itself, use the stdio transport:
-
-```bash
-./ado-mcp --transport stdio
-```
+`scripts/build.sh` builds `bin/ado-mcp`; `GOOS` and `GOARCH` select another target platform.
+`scripts/run.sh` runs it over the stdio transport and passes its arguments to `ado-mcp`, so
+`scripts/run.sh --transport http` serves `http://127.0.0.1:8888/mcp` instead. The variables in
+`.env` in the repository root are exported to the server when the file exists.
 
 ## Running in a container
 
 The scripts use Docker when it is installed and Apple `container` otherwise.
 
 ```bash
-scripts/build.sh
-scripts/run.sh
+scripts/build_container.sh
+scripts/run_container.sh
+scripts/run_container.sh --transport stdio
 ```
 
-`scripts/run.sh` publishes the server on `127.0.0.1:8888` and passes its arguments to
+`scripts/run_container.sh` publishes the server on `127.0.0.1:8888` and passes its arguments to
 `ado-mcp`. Credentials are read from `.env` in the repository root when it exists, as plain
 `NAME=value` lines, and from the authentication variables above when they are set in the
 calling shell. `IMAGE` overrides the image name (`ado-mcp:latest`) and `PORT` the host port.
@@ -99,15 +98,26 @@ Streamable HTTP, for a client that supports it:
 }
 ```
 
-stdio:
+stdio, with the local binary and credentials from `.env`:
 
 ```json
 {
   "mcpServers": {
     "azure-devops": {
-      "command": "/path/to/ado-mcp",
-      "args": ["--transport", "stdio"],
-      "env": { "AZURE_DEVOPS_PAT": "<token>" }
+      "command": "/path/to/ado-mcp/scripts/run.sh"
+    }
+  }
+}
+```
+
+stdio, with the container:
+
+```json
+{
+  "mcpServers": {
+    "azure-devops": {
+      "command": "/path/to/ado-mcp/scripts/run_container.sh",
+      "args": ["--transport", "stdio"]
     }
   }
 }

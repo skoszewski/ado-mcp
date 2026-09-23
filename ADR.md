@@ -56,7 +56,7 @@ an omitted argument from a zero value.
 
 ## ADR-007: Container scripts prefer Docker, fall back to Apple container
 
-**Decision:** `scripts/build.sh` and `scripts/run.sh` use `docker` when it is installed and Apple
+**Decision:** `scripts/build_container.sh` and `scripts/run_container.sh` use `docker` when it is installed and Apple
 `container` otherwise, starting the Apple container services when `container system status`
 reports them stopped.
 
@@ -65,7 +65,7 @@ development host. For the options these scripts use (`build -t --build-arg`,
 `run --rm -i -p -e --env-file`) the two command lines take the same form.
 
 **Consequence:** Apple `container run` 1.4.1 does not forward SIGINT or SIGTERM to the container
-("failed to send signal ... missing signal in xpc message"). For that runtime `scripts/run.sh`
+("failed to send signal ... missing signal in xpc message"). For that runtime `scripts/run_container.sh`
 names the container and stops it with `container stop` from a signal trap. The client runs as a
 background child with stdin passed through explicitly, because bash runs a trap only after the
 foreground command finishes and gives a background command `/dev/null` as stdin. The server
