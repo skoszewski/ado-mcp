@@ -84,10 +84,20 @@ docker run --rm -p 127.0.0.1:8888:8888 -e AZURE_DEVOPS_PAT ado-mcp:latest
 
 ### Kubernetes
 
-The Helm chart in `charts/ado-mcp` runs the container image as a Deployment behind a
-`LoadBalancer` Service on port 8888; `serviceType` selects another Service type. The endpoint
-has no authentication of its own. The chart reads the credentials from the Secret named by `secretName` (default
-`ado-mcp`).
+The Helm chart in `charts/ado-mcp` runs the container image as a Deployment behind a Service.
+The Deployment and the Service are named after the Helm release. The server reads its
+credentials from a Kubernetes Secret, which the chart does not create; it must exist in the
+namespace before the release is installed. The endpoint has no authentication of its own, so
+anyone who can reach the Service uses the credentials in the Secret.
+
+| Value | Default | Meaning |
+| --- | --- | --- |
+| `image` | `ado-mcp:latest` | Container image; it must be pullable by the cluster |
+| `secretName` | `ado-mcp` | Secret holding `AZURE_DEVOPS_PAT`, or `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; every key becomes an environment variable of the server |
+| `port` | `8888` | Port the server listens on and the Service exposes |
+| `serviceType` | `LoadBalancer` | Service type, e.g. `ClusterIP` for access from inside the cluster only |
+
+Create the Secret from a Docker environment file, then install the chart:
 
 ```bash
 kubectl create secret generic ado-mcp --from-env-file=.env
@@ -107,6 +117,26 @@ port: 9000
 ```bash
 helm install ado-mcp charts/ado-mcp -f my-values.yaml
 ```
+
+#### Two servers with different credentials
+
+Each Helm release is an independent server, so one release per identity gives two servers that
+reach different Azure DevOps organizations or run with different permissions. Give each release
+its own Secret, and its own `port`, because two `LoadBalancer` Services in one cluster can
+contend for the same port:
+
+```bash
+kubectl create secret generic ado-mcp-contoso --from-env-file=contoso.env
+kubectl create secret generic ado-mcp-fabrikam --from-env-file=fabrikam.env
+
+helm install ado-mcp-contoso charts/ado-mcp --set secretName=ado-mcp-contoso --set port=8888
+helm install ado-mcp-fabrikam charts/ado-mcp --set secretName=ado-mcp-fabrikam --set port=8889
+```
+
+The endpoints are then `http://<contoso-address>:8888/mcp` and `http://<fabrikam-address>:8889/mcp`,
+where `kubectl get service` reports each address. Upgrade or remove one server with its release
+name, e.g. `helm uninstall ado-mcp-fabrikam`; the Secrets are not part of a release and stay
+until deleted with `kubectl delete secret`.
 
 ## Development scripts
 
