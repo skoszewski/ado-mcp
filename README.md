@@ -2,7 +2,7 @@
 
 An MCP server that gives an AI client read-only access to Azure DevOps pipeline inventory, run
 history, run timelines and run logs, and to the Git repositories those runs build. It runs as a
-local binary or as a container, over Streamable HTTP or stdio.
+binary or as a container, over Streamable HTTP or stdio.
 
 ## Tools
 
@@ -31,7 +31,8 @@ The first method whose environment variables are set is used:
 2. `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` - a service principal client
    secret.
 3. None of the above - the identity signed in to the Azure CLI (`az login`). The container image
-   does not include the Azure CLI, so this method works only with the local binary.
+   does not include the Azure CLI, so this method works only when the binary runs outside a
+   container.
 
 The method in use is logged at startup. A personal access token needs these scopes:
 
@@ -44,15 +45,15 @@ organization.
 
 ### Creating a personal access token
 
-`bin/create-pat`, built by `scripts/build.sh`, creates a personal access token for the user
-signed in to the Azure CLI through the Azure DevOps PAT Lifecycle Management API, and shows it
-with its scope, expiry and authorization ID. With `--bare` it prints only the token on stdout.
+`create-pat` creates a personal access token for the user signed in to the Azure CLI through the
+Azure DevOps PAT Lifecycle Management API, and shows it with its scope, expiry and authorization
+ID. With `--bare` it prints only the token on stdout.
 
 ```bash
-bin/create-pat -O myorg
-bin/create-pat -O myorg --days 7 --name ado-mcp-ci
-bin/create-pat -O myorg --full-scope
-echo "AZURE_DEVOPS_PAT=$(bin/create-pat -O myorg --bare)" > .env
+create-pat -O myorg
+create-pat -O myorg --days 7 --name ado-mcp-ci
+create-pat -O myorg --full-scope
+export AZURE_DEVOPS_PAT="$(create-pat -O myorg --bare)"
 ```
 
 | Flag | Default | Meaning |
@@ -66,24 +67,39 @@ echo "AZURE_DEVOPS_PAT=$(bin/create-pat -O myorg --bare)" > .env
 The API accepts only a user identity, not a service principal. Organization policies can
 restrict PAT creation, scopes and lifetime.
 
-## Running locally
+## Running
 
-Requires Go 1.27.
+```bash
+ado-mcp
+ado-mcp --transport stdio
+```
+
+The first form serves Streamable HTTP at `http://127.0.0.1:8888/mcp`; the second serves stdio for
+an MCP client that starts the server itself. The container image runs `ado-mcp` bound to
+`0.0.0.0`:
+
+```bash
+docker run --rm -p 127.0.0.1:8888:8888 -e AZURE_DEVOPS_PAT ado-mcp:latest
+```
+
+## Development scripts
+
+The `scripts` directory of the repository holds helpers for development.
+
+Building the binaries requires Go 1.27.
 
 ```bash
 scripts/build.sh
 scripts/run.sh
 ```
 
-`scripts/build.sh` builds `bin/ado-mcp` and `bin/create-pat`; `GOOS` and `GOARCH` select
-another target platform.
-`scripts/run.sh` runs it over the stdio transport and passes its arguments to `ado-mcp`, so
-`scripts/run.sh --transport http` serves `http://127.0.0.1:8888/mcp` instead. The variables in
-`.env` in the repository root are exported to the server when the file exists.
+`scripts/build.sh` builds `bin/ado-mcp` and `bin/create-pat` in the repository; `GOOS` and
+`GOARCH` select another target platform. `scripts/run.sh` runs `bin/ado-mcp` over the stdio
+transport and passes its arguments to it, so `scripts/run.sh --transport http` serves
+`http://127.0.0.1:8888/mcp` instead. It exports the variables in the `.env` file in the repository
+root to the server when that file exists.
 
-## Running in a container
-
-The scripts use Docker when it is installed and Apple `container` otherwise.
+The container scripts use Docker when it is installed and Apple `container` otherwise.
 
 ```bash
 scripts/build_container.sh
@@ -91,9 +107,10 @@ scripts/run_container.sh
 scripts/run_container.sh --transport stdio
 ```
 
-`scripts/run_container.sh` publishes the server on `127.0.0.1:8888` and passes its arguments to
-`ado-mcp`. Credentials are read from `.env` in the repository root when it exists, as plain
-`NAME=value` lines, and from the authentication variables above when they are set in the
+`scripts/build_container.sh` builds the `ado-mcp:latest` image. `scripts/run_container.sh`
+publishes the server on `127.0.0.1:8888` and passes its arguments to `ado-mcp`. It passes
+credentials to the container from the `.env` file in the repository root when that file exists,
+as plain `NAME=value` lines, and from the authentication variables above when they are set in the
 calling shell. `IMAGE` overrides the image name (`ado-mcp:latest`) and `PORT` the host port.
 
 ## Flags
@@ -132,26 +149,30 @@ Streamable HTTP, for a client that supports it:
 }
 ```
 
-stdio, with the local binary and credentials from `.env`:
+stdio, with the binary:
 
 ```json
 {
   "mcpServers": {
     "azure-devops": {
-      "command": "/path/to/ado-mcp/scripts/run.sh"
+      "command": "/usr/local/bin/ado-mcp",
+      "args": ["--transport", "stdio"],
+      "env": { "AZURE_DEVOPS_PAT": "<token>" }
     }
   }
 }
 ```
 
-stdio, with the container:
+stdio, with the container image; `-e AZURE_DEVOPS_PAT` passes the token set in `env` into the
+container:
 
 ```json
 {
   "mcpServers": {
     "azure-devops": {
-      "command": "/path/to/ado-mcp/scripts/run_container.sh",
-      "args": ["--transport", "stdio"]
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "-e", "AZURE_DEVOPS_PAT", "ado-mcp:latest", "--transport", "stdio"],
+      "env": { "AZURE_DEVOPS_PAT": "<token>" }
     }
   }
 }
