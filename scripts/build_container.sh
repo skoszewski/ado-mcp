@@ -12,7 +12,7 @@ version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
 if command -v docker >/dev/null 2>&1; then
     docker build --build-arg "VERSION=${version}" -t "${image}" .
 elif command -v container >/dev/null 2>&1; then
-    # Apple container needs its background services running before any other command.
+    # Starts the Apple container services when they are stopped.
     container system status >/dev/null 2>&1 || container system start
     container build --build-arg "VERSION=${version}" -t "${image}" .
 else

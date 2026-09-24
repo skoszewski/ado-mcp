@@ -97,9 +97,9 @@ scripts/run.sh
 `GOARCH` select another target platform. `scripts/run.sh` runs `bin/ado-mcp` over the stdio
 transport and passes its arguments to it, so `scripts/run.sh --transport http` serves
 `http://127.0.0.1:8888/mcp` instead. It exports the variables in the `.env` file in the repository
-root to the server when that file exists.
+root to the server when that file exists. `.env` is a Docker environment file.
 
-The container scripts use Docker when it is installed and Apple `container` otherwise.
+The Bash container scripts use Docker when it is installed and Apple `container` otherwise.
 
 ```bash
 scripts/build_container.sh
@@ -110,8 +110,19 @@ scripts/run_container.sh --transport stdio
 `scripts/build_container.sh` builds the `ado-mcp:latest` image. `scripts/run_container.sh`
 publishes the server on `127.0.0.1:8888` and passes its arguments to `ado-mcp`. It passes
 credentials to the container from the `.env` file in the repository root when that file exists,
-as plain `NAME=value` lines, and from the authentication variables above when they are set in the
-calling shell. `IMAGE` overrides the image name (`ado-mcp:latest`) and `PORT` the host port.
+and from the authentication variables above when they are set in the calling shell. `IMAGE`
+overrides the image name (`ado-mcp:latest`) and `PORT` the host port.
+
+PowerShell 7 scripts do the same on any platform, with Docker as the container runtime:
+
+```powershell
+scripts/build.ps1
+scripts/run.ps1
+scripts/build_container.ps1
+scripts/run_container.ps1
+```
+
+`scripts/build.ps1` gives binaries built for Windows the `.exe` extension.
 
 ## Flags
 

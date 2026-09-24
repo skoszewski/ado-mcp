@@ -25,7 +25,7 @@ done
 if command -v docker >/dev/null 2>&1; then
     exec docker "${run_args[@]}" "${image}" "$@"
 elif command -v container >/dev/null 2>&1; then
-    # Apple container needs its background services running before any other command.
+    # Starts the Apple container services when they are stopped.
     container system status >/dev/null 2>&1 || container system start
 
     # Stops the container on INT and TERM.
