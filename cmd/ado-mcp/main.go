@@ -49,9 +49,21 @@ Authentication, first match wins:
   otherwise                                                 the signed-in Azure CLI
 
 Flags:
-`
+      --transport <name>     MCP transport: http (Streamable HTTP) or stdio (default: http)
+      --host <address>       address the HTTP server binds to (default: 127.0.0.1)
+      --port <port>          port the HTTP server listens on (default: 8888)
+      --path <path>          URL path of the MCP endpoint (default: /mcp)
+      --max-log-lines <n>    maximum lines ado_get_run_log and ado_get_repository_item return
+                             in one call (default: 2000)
+      --optimize <settings>  comma-separated tool settings:
+                               small-model      ado_get_run_log returns the whole log, or its
+                                                last --max-log-lines lines
+                               log-type=<type>  logs ado_list_run_logs lists when a call names
+                                                none: job (default), task or all
+      --debug[=<level>]      debug output: 1 (a bare --debug) logs tool calls, 2 adds HTTP
+                             requests, 3 adds the MCP library's own logging
+  -h, --help                 show this help
 
-const usageExamples = `
 Examples:
   ado-mcp
   ado-mcp --port 9000 --path /ado
@@ -97,29 +109,19 @@ func parseFlags() options {
 	flags := flag.CommandLine
 	flags.Usage = func() {
 		fmt.Fprint(flags.Output(), usageText)
-		flags.PrintDefaults()
-		fmt.Fprint(flags.Output(), usageExamples)
 	}
 
-	flags.StringVar(&opts.transport, "transport", "http", "MCP transport: http (Streamable HTTP) or stdio")
-	flags.StringVar(&opts.host, "host", "127.0.0.1", "address to bind the HTTP server to")
-	flags.IntVar(&opts.port, "port", 8888, "port the HTTP server listens on")
-	flags.StringVar(&opts.path, "path", "/mcp", "URL path the MCP endpoint is served at")
-	flags.IntVar(&opts.maxLogLines, "max-log-lines", 2000, "maximum log lines ado_get_run_log may return in one call")
-	flags.Func("optimize", `comma-separated settings the tools adapt their behaviour to, as switches named on their own
-and keys given as name=value, e.g. 'small-model,log-type=task'. small-model suits a client model
-that does not reliably page through a long result: ado_get_run_log then returns the whole log,
-or its last --max-log-lines lines when it is longer than that, instead of the page the call
-asked for. log-type (job, task or all; job by default) sets which logs ado_list_run_logs reports
-when the call does not name one itself -- task lists each step's own log, which is far smaller
-than a job's combined output`, func(value string) error {
+	flags.StringVar(&opts.transport, "transport", "http", "")
+	flags.StringVar(&opts.host, "host", "127.0.0.1", "")
+	flags.IntVar(&opts.port, "port", 8888, "")
+	flags.StringVar(&opts.path, "path", "/mcp", "")
+	flags.IntVar(&opts.maxLogLines, "max-log-lines", 2000, "")
+	flags.Func("optimize", "", func(value string) error {
 		optimizations, err := tools.ParseOptimizations(value)
 		opts.optimizations = optimizations
 		return err
 	})
-	flags.Var(&opts.debug, "debug", `debug output level, given as --debug or --debug=N: 1 (the level of a bare --debug)
-logs every tool call with the arguments it was given, 2 adds one line per incoming HTTP
-request, and 3 adds the MCP library's own logging, which dumps raw protocol traffic`)
+	flags.Var(&opts.debug, "debug", "")
 
 	flag.Parse()
 	return opts

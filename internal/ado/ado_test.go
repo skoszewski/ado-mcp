@@ -3,11 +3,13 @@ package ado
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewAuthorizerPAT(t *testing.T) {
@@ -84,6 +86,40 @@ func TestRequestErrorCode(t *testing.T) {
 	}
 	if !(&RequestError{StatusCode: 400, Message: "TF200016: missing"}).NotFound() {
 		t.Error("TF200016 with status 400: expected NotFound")
+	}
+}
+
+func TestCreatePAT(t *testing.T) {
+	var received PATRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/myorg/_apis/tokens/pats" || r.URL.Query().Get("api-version") != patAPIVersion {
+			t.Errorf("request = %s %s", r.Method, r.URL)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Error(err)
+		}
+		if received.Scope == "bogus" {
+			w.Write([]byte(`{"patToken":null,"patTokenError":"invalidScope"}`))
+			return
+		}
+		w.Write([]byte(`{"patToken":{"displayName":"ado-mcp","scope":"vso.project vso.build vso.code","token":"secret","authorizationId":"a1"},"patTokenError":"none"}`))
+	}))
+	defer server.Close()
+	defer func(original string) { vsspsURL = original }(vsspsURL)
+	vsspsURL = server.URL
+
+	client := &Client{HTTP: server.Client(), Auth: patAuthorizer{header: "Bearer test"}}
+	validTo := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	pat, err := client.CreatePAT(context.Background(), "https://dev.azure.com/myorg", PATRequest{DisplayName: "ado-mcp", Scope: ReadOnlyScopes, ValidTo: validTo})
+	if err != nil || pat.Token != "secret" || pat.AuthorizationID != "a1" {
+		t.Errorf("CreatePAT = %+v, %v", pat, err)
+	}
+	if received.DisplayName != "ado-mcp" || received.Scope != ReadOnlyScopes || !received.ValidTo.Equal(validTo) || received.AllOrgs {
+		t.Errorf("request body = %+v", received)
+	}
+
+	if _, err := client.CreatePAT(context.Background(), "myorg", PATRequest{Scope: "bogus"}); err == nil || !strings.Contains(err.Error(), "invalidScope") {
+		t.Errorf("rejected scope: got %v", err)
 	}
 }
 

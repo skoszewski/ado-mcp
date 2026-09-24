@@ -42,6 +42,30 @@ The method in use is logged at startup. A personal access token needs these scop
 A service principal or Azure CLI identity needs read access to the same areas in the
 organization.
 
+### Creating a personal access token
+
+`bin/create-pat`, built by `scripts/build.sh`, creates a personal access token for the user
+signed in to the Azure CLI through the Azure DevOps PAT Lifecycle Management API, and shows it
+with its scope, expiry and authorization ID. With `--bare` it prints only the token on stdout.
+
+```bash
+bin/create-pat -O myorg
+bin/create-pat -O myorg --days 7 --name ado-mcp-ci
+bin/create-pat -O myorg --full-scope
+echo "AZURE_DEVOPS_PAT=$(bin/create-pat -O myorg --bare)" > .env
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--organization`, `-O` | | Organization name or `https://dev.azure.com/<org>` URL; required |
+| `--name` | `ado-mcp` | Display name of the token |
+| `--days` | `30` | Number of days the token is valid for |
+| `--full-scope` | | Grant full access instead of the read-only scopes above |
+| `--bare` | | Print only the token on stdout, for use in scripts |
+
+The API accepts only a user identity, not a service principal. Organization policies can
+restrict PAT creation, scopes and lifetime.
+
 ## Running locally
 
 Requires Go 1.27.
@@ -51,7 +75,8 @@ scripts/build.sh
 scripts/run.sh
 ```
 
-`scripts/build.sh` builds `bin/ado-mcp`; `GOOS` and `GOARCH` select another target platform.
+`scripts/build.sh` builds `bin/ado-mcp` and `bin/create-pat`; `GOOS` and `GOARCH` select
+another target platform.
 `scripts/run.sh` runs it over the stdio transport and passes its arguments to `ado-mcp`, so
 `scripts/run.sh --transport http` serves `http://127.0.0.1:8888/mcp` instead. The variables in
 `.env` in the repository root are exported to the server when the file exists.

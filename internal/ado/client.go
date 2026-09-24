@@ -2,6 +2,7 @@
 package ado
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -88,11 +89,28 @@ func encodeQuery(query url.Values) string {
 // get performs a GET request, authenticated unless authorize is false, and returns the body
 // and response headers.
 func (c *Client) get(ctx context.Context, requestURL string, authorize bool) ([]byte, http.Header, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	return c.do(ctx, http.MethodGet, requestURL, nil, authorize)
+}
+
+// do performs a request with body encoded as JSON when it is not nil, authenticated unless
+// authorize is false, and returns the response body and headers.
+func (c *Client) do(ctx context.Context, method, requestURL string, body any, authorize bool) ([]byte, http.Header, error) {
+	var payload io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, nil, err
+		}
+		payload = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, requestURL, payload)
 	if err != nil {
 		return nil, nil, err
 	}
 	request.Header.Set("Accept", "application/json")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	if authorize {
 		authorization, err := c.Auth.Authorization(ctx)
 		if err != nil {
@@ -107,7 +125,7 @@ func (c *Client) get(ctx context.Context, requestURL string, authorize bool) ([]
 	}
 	defer response.Body.Close()
 
-	body, err := io.ReadAll(response.Body)
+	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, nil, fmt.Errorf("request to %s failed: %w", requestURL, err)
 	}
@@ -116,12 +134,12 @@ func (c *Client) get(ctx context.Context, requestURL string, authorize bool) ([]
 		var failure struct {
 			Message string `json:"message"`
 		}
-		_ = json.Unmarshal(body, &failure)
+		_ = json.Unmarshal(responseBody, &failure)
 		return nil, nil, &RequestError{
 			URL: requestURL, StatusCode: response.StatusCode, Status: response.Status, Message: failure.Message,
 		}
 	}
-	return body, response.Header, nil
+	return responseBody, response.Header, nil
 }
 
 // getJSON performs an authenticated GET request and decodes the JSON body into out. An empty

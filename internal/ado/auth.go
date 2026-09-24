@@ -45,6 +45,11 @@ func NewAuthorizer(getenv func(string) string) (Authorizer, error) {
 		return &tokenAuthorizer{method: method, credential: credential}, nil
 	}
 
+	return NewAzureCLIAuthorizer()
+}
+
+// NewAzureCLIAuthorizer returns an Authorizer for the identity signed in to the Azure CLI.
+func NewAzureCLIAuthorizer() (Authorizer, error) {
 	credential, err := azidentity.NewAzureCLICredential(nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not create the Azure CLI credential: %w", err)
