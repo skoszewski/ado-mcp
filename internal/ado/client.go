@@ -8,11 +8,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
 // APIVersion is the REST API version every request asks for, unless a resource needs its own.
 const APIVersion = "7.1"
+
+// Error codes Azure DevOps starts an error message with.
+const (
+	CodeRefNotFound  = "TF401175"
+	CodePathNotFound = "TF401174"
+)
+
+var errorCodeRE = regexp.MustCompile(`^TF\d+$`)
 
 // Client performs authenticated Azure DevOps REST requests.
 type Client struct {
@@ -38,7 +47,16 @@ func (e *RequestError) Unauthorized() bool {
 // which it also answers for a resource the identity is not allowed to see. A missing project is
 // reported as 400 with error code TF200016.
 func (e *RequestError) NotFound() bool {
-	return e.StatusCode == http.StatusNotFound || strings.HasPrefix(e.Message, "TF200016:")
+	return e.StatusCode == http.StatusNotFound || e.Code() == "TF200016"
+}
+
+// Code returns the Azure DevOps error code the message starts with, such as TF401175, or "".
+func (e *RequestError) Code() string {
+	code, _, found := strings.Cut(e.Message, ":")
+	if !found || !errorCodeRE.MatchString(code) {
+		return ""
+	}
+	return code
 }
 
 func (e *RequestError) Error() string {

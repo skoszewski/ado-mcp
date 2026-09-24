@@ -112,6 +112,10 @@ func (h *handlers) explainError(err error) error {
 		return err
 	}
 	switch {
+	case requestError.Code() == ado.CodeRefNotFound:
+		return fmt.Errorf(refNotFoundMessage, requestError)
+	case requestError.Code() == ado.CodePathNotFound:
+		return fmt.Errorf(pathNotFoundMessage, requestError)
 	case requestError.Unauthorized():
 		return fmt.Errorf(accessDeniedMessage, h.client.Auth.Method(), requestError)
 	case requestError.NotFound():
@@ -566,7 +570,6 @@ type repositorySummary struct {
 	DefaultBranch *string `json:"default_branch"`
 	IsDisabled    *bool   `json:"is_disabled"`
 	IsFork        *bool   `json:"is_fork"`
-	Size          *int64  `json:"size"`
 	WebURL        *string `json:"web_url"`
 	RemoteURL     *string `json:"remote_url"`
 }

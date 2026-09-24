@@ -97,3 +97,22 @@ with `top` it returns that one page and its cursor.
 
 **Reason:** A small model tends to answer from the first page it reads, and a failed step's error
 is at the end of its log.
+
+## ADR-011: Azure DevOps errors rewritten into guidance for the model
+
+**Decision:** A tool error from Azure DevOps reaches the client as a message that names the
+cause and the next step: a missing branch, tag or commit (`TF401175`), a missing path
+(`TF401174`), a refusal for the authenticated identity (401, 403, or 203 with a sign-in page),
+and a missing resource (404, or `TF200016` for a project).
+
+**Reason:** Azure DevOps decides what the server can reach and answers a resource the identity may
+not see the same way as one that does not exist. A bare status line leaves the model to guess, and
+a generic not-found message sends it looking for a wrong repository name when only the branch is
+missing.
+
+## ADR-012: No repository size in ado_list_repositories
+
+**Decision:** `ado_list_repositories` does not report the repository size.
+
+**Reason:** Azure DevOps reports a size of 0 for repositories that hold files, which reads as an
+empty repository.

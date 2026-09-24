@@ -104,5 +104,16 @@ see it, so this is either a wrong name or no access. Check the name against ado_
 ado_list_repositories before concluding. If the name is right, tell the user this server cannot
 reach it instead of guessing.`
 
+const refNotFoundMessage = `Azure DevOps could not find the branch, tag or commit this call names as ref:
+%s
+The repository exists; the ref does not. ado_list_repositories reports each repository's
+default_branch, and omitting ref reads that branch. Tell the user the ref does not exist in that
+repository rather than concluding the repository or its files are missing.`
+
+const pathNotFoundMessage = `Azure DevOps could not find this path in the repository at the version the call reads:
+%s
+The repository and the version exist; the path does not. ado_list_repository_items lists what a
+folder holds at that version, so check the path there before concluding the file is missing.`
+
 const folderPathMessage = `'%s' is a folder, not a file, so it has no content to read. Use ado_list_repository_items
 with scope_path set to that path to list what it holds, then read one of the files it reports.`

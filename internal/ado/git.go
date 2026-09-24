@@ -13,7 +13,6 @@ type Repository struct {
 	DefaultBranch *string `json:"defaultBranch"`
 	IsDisabled    *bool   `json:"isDisabled"`
 	IsFork        *bool   `json:"isFork"`
-	Size          *int64  `json:"size"`
 	WebURL        *string `json:"webUrl"`
 	RemoteURL     *string `json:"remoteUrl"`
 }

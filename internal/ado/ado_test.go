@@ -69,6 +69,24 @@ func TestGetPageAndErrors(t *testing.T) {
 	}
 }
 
+func TestRequestErrorCode(t *testing.T) {
+	cases := map[string]string{
+		"TF401175:The version descriptor <Branch: main > could not be resolved": "TF401175",
+		"TF200016: The following project does not exist: X":                     "TF200016",
+		"Not Found": "",
+		"":          "",
+		"TFabc: x":  "",
+	}
+	for message, want := range cases {
+		if got := (&RequestError{Message: message}).Code(); got != want {
+			t.Errorf("Code() of %q = %q, want %q", message, got, want)
+		}
+	}
+	if !(&RequestError{StatusCode: 400, Message: "TF200016: missing"}).NotFound() {
+		t.Error("TF200016 with status 400: expected NotFound")
+	}
+}
+
 func TestNormalizeOrgURL(t *testing.T) {
 	cases := map[string]string{"": "", "org": "https://dev.azure.com/org", "https://dev.azure.com/org": "https://dev.azure.com/org"}
 	for input, want := range cases {
