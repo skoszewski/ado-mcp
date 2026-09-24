@@ -1,4 +1,4 @@
-FROM golang:1.27-trixie AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-trixie AS build
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -7,7 +7,9 @@ COPY cmd ./cmd
 COPY internal ./internal
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/ado-mcp ./cmd/ado-mcp
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/ado-mcp ./cmd/ado-mcp
 
 FROM gcr.io/distroless/static-debian13:nonroot
 

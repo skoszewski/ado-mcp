@@ -1,0 +1,8 @@
+image: ado-mcp:latest
+
+# Secret holding AZURE_DEVOPS_PAT, or AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET.
+secretName: ado-mcp
+
+port: 8888
+
+serviceType: LoadBalancer

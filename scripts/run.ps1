@@ -22,20 +22,11 @@ $saved = @{}
 $envFile = Join-Path $root '.env'
 if (Test-Path $envFile) {
     foreach ($line in Get-Content -LiteralPath $envFile) {
-        $line = $line.TrimStart()
-        if (-not $line -or $line.StartsWith('#')) {
-            continue
+        if ($line.Contains('=') -and -not $line.StartsWith('#')) {
+            $name, $value = $line -split '=', 2
+            $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+            [Environment]::SetEnvironmentVariable($name, $value)
         }
-        $name, $value = $line -split '=', 2
-        if ($name -match '\s') {
-            [Console]::Error.WriteLine("Error: ${envFile}: variable '$name' contains whitespace")
-            exit 1
-        }
-        if ($null -eq $value) {
-            continue
-        }
-        $saved[$name] = [Environment]::GetEnvironmentVariable($name)
-        [Environment]::SetEnvironmentVariable($name, $value)
     }
 }
 

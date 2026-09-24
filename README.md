@@ -82,6 +82,32 @@ an MCP client that starts the server itself. The container image runs `ado-mcp` 
 docker run --rm -p 127.0.0.1:8888:8888 -e AZURE_DEVOPS_PAT ado-mcp:latest
 ```
 
+### Kubernetes
+
+The Helm chart in `charts/ado-mcp` runs the container image as a Deployment behind a
+`LoadBalancer` Service on port 8888; `serviceType` selects another Service type. The endpoint
+has no authentication of its own. The chart reads the credentials from the Secret named by `secretName` (default
+`ado-mcp`).
+
+```bash
+kubectl create secret generic ado-mcp --from-env-file=.env
+helm install ado-mcp charts/ado-mcp --set image=<registry>/ado-mcp:latest
+```
+
+A values file overrides the defaults in `charts/ado-mcp/values.yaml`; values it omits keep their
+defaults:
+
+```yaml
+# my-values.yaml
+image: <registry>/ado-mcp:1.0.0
+secretName: ado-mcp-credentials
+port: 9000
+```
+
+```bash
+helm install ado-mcp charts/ado-mcp -f my-values.yaml
+```
+
 ## Development scripts
 
 The `scripts` directory of the repository holds helpers for development.
@@ -107,7 +133,9 @@ scripts/run_container.sh
 scripts/run_container.sh --transport stdio
 ```
 
-`scripts/build_container.sh` builds the `ado-mcp:latest` image. `scripts/run_container.sh`
+`scripts/build_container.sh` builds the `ado-mcp:latest` image for the host's architecture;
+`ARCH` set to `amd64`, `arm64` or `amd64,arm64` selects others, e.g.
+`ARCH=amd64,arm64 scripts/build_container.sh` for a multi-architecture image. `scripts/run_container.sh`
 publishes the server on `127.0.0.1:8888` and passes its arguments to `ado-mcp`. It passes
 credentials to the container from the `.env` file in the repository root when that file exists,
 and from the authentication variables above when they are set in the calling shell. `IMAGE`

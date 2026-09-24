@@ -4,7 +4,8 @@
 Builds the ado-mcp container image with Docker.
 
 .DESCRIPTION
-IMAGE overrides the image name (default: ado-mcp:latest).
+IMAGE overrides the image name (default: ado-mcp:latest). ARCH selects the architectures:
+amd64, arm64 or amd64,arm64 (default: the host's).
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -22,7 +23,8 @@ try {
         $version = 'dev'
     }
 
-    docker build --build-arg "VERSION=$version" -t $image .
+    $platform = $env:ARCH ? @('--platform', (($env:ARCH -split ',' | ForEach-Object { "linux/$_" }) -join ',')) : @()
+    docker build @platform --build-arg "VERSION=$version" -t $image .
     exit $LASTEXITCODE
 }
 finally {
