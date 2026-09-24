@@ -107,6 +107,15 @@ calling shell. `IMAGE` overrides the image name (`ado-mcp:latest`) and `PORT` th
 | `--max-log-lines` | `2000` | Maximum lines `ado_get_run_log` and `ado_get_repository_item` return in one call |
 | `--optimize` | | `small-model` makes `ado_get_run_log` return the whole log or its last `--max-log-lines` lines; `log-type=job\|task\|all` sets the log type `ado_list_run_logs` lists by default (`job`) |
 | `--debug[=N]` | `0` | `1` logs tool calls, `2` adds incoming HTTP requests, `3` adds the MCP library's own logging |
+| `--log-style` | `auto` | `human`, `daemon`, or `auto` for `human` when stdout is a terminal; see Logging |
+
+## Logging
+
+`ado-mcp` logs to stderr in one of two styles. `human` starts with a banner listing the version,
+authentication method, tools and endpoint, and writes one readable line per event, colored when
+stderr is a terminal. `daemon` writes timestamped `key=value` records for a container runtime,
+service manager or MCP client to collect. `--log-style auto`, the default, uses `human` when
+stdout is a terminal and `daemon` otherwise.
 
 ## Client configuration
 

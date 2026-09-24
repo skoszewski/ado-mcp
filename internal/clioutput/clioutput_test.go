@@ -2,6 +2,7 @@ package clioutput
 
 import (
 	"bytes"
+	"log/slog"
 	"testing"
 )
 
@@ -23,6 +24,26 @@ func TestPlainOutput(t *testing.T) {
 	want := "created 2\nError: no organization\n  Scope:             vso.build\n  Authorization ID:  a1\n"
 	if got != want {
 		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestHandler(t *testing.T) {
+	got := capture(false, func() {
+		logger := slog.New(NewHandler(slog.LevelDebug))
+		logger.Debug("tool call", "tool", "ado_list_runs", "arguments", `{"project":"x"}`)
+		logger.Info("stopping server")
+		logger.Error("server failed", "error", "unknown --transport")
+	})
+	want := "  [TOOL CALL] ado_list_runs {\"project\":\"x\"}\n" +
+		"  Stopping server\n" +
+		"Error: server failed: unknown --transport\n"
+	if got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+
+	got = capture(true, func() { slog.New(NewHandler(slog.LevelInfo)).Warn("slow request") })
+	if got != yellow+"  Slow request"+reset+"\n" {
+		t.Errorf("colored output = %q", got)
 	}
 }
 

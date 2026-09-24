@@ -20,6 +20,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/skoszewski/ado-mcp/internal/ado"
+	"github.com/skoszewski/ado-mcp/internal/clioutput"
 	"github.com/skoszewski/ado-mcp/internal/tools"
 )
 
@@ -62,6 +63,8 @@ Flags:
                                                 none: job (default), task or all
       --debug[=<level>]      debug output: 1 (a bare --debug) logs tool calls, 2 adds HTTP
                              requests, 3 adds the MCP library's own logging
+      --log-style <style>    human (colored, readable lines), daemon (timestamped key=value
+                             records) or auto: human when stdout is a terminal (default: auto)
   -h, --help                 show this help
 
 Examples:
@@ -69,6 +72,12 @@ Examples:
   ado-mcp --port 9000 --path /ado
   ado-mcp --transport stdio
 `
+
+var debugDescriptions = map[int]string{
+	debugToolCalls: "logging every tool call with its arguments",
+	debugRequests:  "logging every tool call with its arguments, and each HTTP request",
+	debugSDK:       "logging every tool call, each HTTP request, and the MCP library's own output",
+}
 
 // debugLevel is the --debug flag: a bare --debug sets level 1, --debug=N sets level N.
 type debugLevel int
@@ -102,6 +111,8 @@ type options struct {
 	maxLogLines   int
 	optimizations tools.Optimizations
 	debug         debugLevel
+	logStyle      string
+	interactive   bool
 }
 
 func parseFlags() options {
@@ -122,6 +133,7 @@ func parseFlags() options {
 		return err
 	})
 	flags.Var(&opts.debug, "debug", "")
+	flags.StringVar(&opts.logStyle, "log-style", "auto", "")
 
 	flag.Parse()
 	return opts
@@ -133,7 +145,21 @@ func main() {
 	if opts.debug > 0 {
 		level = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	switch opts.logStyle {
+	case "auto":
+		opts.interactive = clioutput.IsTerminal(os.Stdout)
+	case "human":
+		opts.interactive = true
+	case "daemon":
+		opts.interactive = false
+	default:
+		clioutput.Fail(fmt.Errorf("unknown --log-style %q; use auto, human or daemon", opts.logStyle))
+	}
+	var handler slog.Handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	if opts.interactive {
+		handler = clioutput.NewHandler(level)
+	}
+	slog.SetDefault(slog.New(handler))
 
 	if err := run(opts); err != nil {
 		slog.Error("server failed", "error", err)
@@ -171,9 +197,13 @@ func run(opts options) error {
 		&mcp.ServerOptions{Instructions: tools.Instructions, Logger: sdkLogger},
 	)
 	toolNames := tools.Register(server, client, opts.maxLogLines, opts.optimizations)
-	slog.Info("starting server", "version", version, "transport", opts.transport,
-		"authentication", client.Auth.Method(), "optimize", opts.optimizations.String(),
-		"debug", int(opts.debug), "tools", strings.Join(toolNames, ","))
+	if opts.interactive {
+		printBanner(opts, client.Auth.Method(), toolNames)
+	} else {
+		slog.Info("starting server", "version", version, "transport", opts.transport,
+			"authentication", client.Auth.Method(), "optimize", opts.optimizations.String(),
+			"debug", int(opts.debug), "tools", strings.Join(toolNames, ","))
+	}
 
 	if opts.transport == "stdio" {
 		return server.Run(ctx, &mcp.StdioTransport{})
@@ -198,7 +228,9 @@ func serveHTTP(ctx context.Context, server *mcp.Server, opts options, sdkLogger 
 	mux.Handle(opts.path, handler)
 
 	httpServer := &http.Server{Addr: net.JoinHostPort(opts.host, strconv.Itoa(opts.port)), Handler: mux}
-	slog.Info("listening", "endpoint", "http://"+httpServer.Addr+opts.path)
+	if !opts.interactive {
+		slog.Info("listening", "endpoint", "http://"+httpServer.Addr+opts.path)
+	}
 	failed := make(chan error, 1)
 	go func() {
 		failed <- httpServer.ListenAndServe()
@@ -213,4 +245,28 @@ func serveHTTP(ctx context.Context, server *mcp.Server, opts options, sdkLogger 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return httpServer.Shutdown(shutdownCtx)
+}
+
+// printBanner writes the settings, the tools and the endpoint for a person reading the terminal.
+func printBanner(opts options, authMethod string, toolNames []string) {
+	clioutput.Banner("Serving Azure DevOps Pipelines over MCP")
+	clioutput.Info("  Version: %s", version)
+	clioutput.Info("  Authentication: %s", authMethod)
+	if description := opts.optimizations.String(); description != "" {
+		clioutput.Info("  Optimize: %s", description)
+	}
+	if opts.debug > 0 {
+		clioutput.Warning("  Debug: %s", debugDescriptions[int(opts.debug)])
+	}
+	clioutput.Info("  Tools (%d):", len(toolNames))
+	for _, name := range toolNames {
+		clioutput.Info("    - %s", name)
+	}
+	if opts.transport == "stdio" {
+		clioutput.Info("  Transport: stdio")
+	} else {
+		endpoint := fmt.Sprintf("http://%s%s", net.JoinHostPort(opts.host, strconv.Itoa(opts.port)), opts.path)
+		clioutput.Info("  Endpoint: %s", clioutput.Emphasize(endpoint))
+	}
+	clioutput.Info("")
 }

@@ -8,12 +8,15 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+
+	"golang.org/x/term"
 )
 
 const (
 	red    = "\033[0;31m"
 	green  = "\033[0;32m"
 	yellow = "\033[0;33m"
+	blue   = "\033[0;34m"
 	cyan   = "\033[0;36m"
 	reset  = "\033[0m"
 )
@@ -22,16 +25,16 @@ const rule = "=========================================="
 
 var (
 	out     io.Writer = os.Stderr
-	colored           = isTerminal(os.Stderr)
+	colored           = IsTerminal(os.Stderr)
 )
 
-func isTerminal(file *os.File) bool {
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+// IsTerminal reports whether file is a terminal.
+func IsTerminal(file *os.File) bool {
+	return term.IsTerminal(int(file.Fd()))
 }
 
 func colorize(color, text string) string {
-	if !colored {
+	if !colored || color == "" {
 		return text
 	}
 	return color + text + reset
@@ -46,6 +49,11 @@ func Banner(title string) {
 	fmt.Fprintln(out, colorize(cyan, rule))
 	fmt.Fprintln(out, colorize(cyan, title))
 	fmt.Fprintln(out, colorize(cyan, rule))
+}
+
+// Emphasize returns text in cyan, for embedding in a line.
+func Emphasize(text string) string {
+	return colorize(cyan, text)
 }
 
 // Info writes a plain line formatted as by fmt.Sprintf.

@@ -116,3 +116,15 @@ missing.
 
 **Reason:** Azure DevOps reports a size of 0 for repositories that hold files, which reads as an
 empty repository.
+
+## ADR-013: Human or daemon log style
+
+**Decision:** `ado-mcp` logs in a human style, a banner and one colored line per event, or in a
+daemon style, timestamped `slog` text records. `--log-style` chooses one; its default, `auto`,
+chooses human when stdout is a terminal. Terminals are detected with `golang.org/x/term`.
+
+**Reason:** A person running the server in a terminal reads its output directly, while a
+container runtime, a service manager or an MCP client on the stdio transport collects it and
+needs timestamps and levels. A character-device check is not enough to detect a terminal:
+`/dev/null` is a character device. The flag covers cases detection gets wrong, such as a
+terminal multiplexer or a log collector attached to a pseudo-terminal.
