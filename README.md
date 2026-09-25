@@ -25,7 +25,7 @@ binary or as a container, over Streamable HTTP or stdio.
 
 ## Authentication
 
-The first method whose environment variables are set is used:
+With the default `--auth auto`, the first method whose environment variables are set is used:
 
 1. `AZURE_DEVOPS_PAT` - a personal access token.
 2. `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` - a service principal client
@@ -33,6 +33,11 @@ The first method whose environment variables are set is used:
 3. None of the above - the identity signed in to the Azure CLI (`az login`). The container image
    does not include the Azure CLI, so this method works only when the binary runs outside a
    container.
+
+`--auth` forces one method when several are configured: `pat`, `service-principal` or
+`azure-cli`. The server fails at startup when the forced method's variables are missing.
+`--auth none` configures no credential; every call then needs an `Authorization` header from the
+MCP client, described below.
 
 The method in use is logged at startup. A personal access token needs these scopes:
 
@@ -53,8 +58,8 @@ one of the two forms Azure DevOps accepts:
   token preceded by a colon: `printf ':%s' "$AZURE_DEVOPS_PAT" | base64`.
 - `Bearer <token>` for a Microsoft Entra access token issued for Azure DevOps.
 
-A client without the header, and every client on stdio, uses the configured method. For
-example, in a Claude Code configuration:
+A client without the header, and every client on stdio, uses the configured method; with
+`--auth none` such a call fails. For example, in a Claude Code configuration:
 
 ```json
 {
@@ -212,6 +217,7 @@ scripts/run_container.ps1
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--transport` | `http` | `http` (Streamable HTTP) or `stdio` |
+| `--auth` | `auto` | `auto`, `pat`, `service-principal`, `azure-cli` or `none`; see Authentication |
 | `--host` | `127.0.0.1` | Address the HTTP server binds to; the container image sets `0.0.0.0` |
 | `--port` | `8888` | HTTP port |
 | `--path` | `/mcp` | HTTP path of the MCP endpoint |

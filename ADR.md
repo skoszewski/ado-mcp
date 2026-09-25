@@ -30,6 +30,11 @@ variables when all three are set, then the Azure CLI. There is no flag to choose
 **Reason:** The same binary runs unchanged locally and in a container, configured only by its
 environment.
 
+**Amendment:** `--auth` (default `auto`, the behavior above) forces `pat`, `service-principal` or
+`azure-cli` when several are configured, or `none` to hold no credential and rely on the
+`Authorization` header of ADR-014. A forced method whose variables are missing fails at startup
+instead of falling through to another identity.
+
 ## ADR-004: No Azure CLI in the container image
 
 **Decision:** The image is a static Go binary on `distroless/static`. Inside the container only

@@ -44,13 +44,17 @@ pipelines, runs, run timelines and run logs -- plus the Git repositories those r
 Every tool call names the organization and project it applies to, and reaches whatever the
 authenticated identity is authorized for in Azure DevOps.
 
-Authentication, first match wins:
+Authentication with --auth auto, first match wins:
   AZURE_DEVOPS_PAT                                          personal access token
   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET     service principal client secret
   otherwise                                                 the signed-in Azure CLI
 
 Flags:
       --transport <name>     MCP transport: http (Streamable HTTP) or stdio (default: http)
+      --auth <method>        authentication: auto (first configured method), pat,
+                             service-principal, azure-cli, or none (no credential of the
+                             server's own; the MCP client sends an Authorization header)
+                             (default: auto)
       --host <address>       address the HTTP server binds to (default: 127.0.0.1)
       --port <port>          port the HTTP server listens on (default: 8888)
       --path <path>          URL path of the MCP endpoint (default: /mcp)
@@ -105,6 +109,7 @@ func (d *debugLevel) IsBoolFlag() bool {
 
 type options struct {
 	transport     string
+	auth          string
 	host          string
 	port          int
 	path          string
@@ -123,6 +128,7 @@ func parseFlags() options {
 	}
 
 	flags.StringVar(&opts.transport, "transport", "http", "")
+	flags.StringVar(&opts.auth, "auth", ado.AuthAuto, "")
 	flags.StringVar(&opts.host, "host", "127.0.0.1", "")
 	flags.IntVar(&opts.port, "port", 8888, "")
 	flags.StringVar(&opts.path, "path", "/mcp", "")
@@ -186,7 +192,7 @@ func run(opts options) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	authorizer, err := ado.NewAuthorizer(os.Getenv)
+	authorizer, err := ado.NewAuthorizer(opts.auth, os.Getenv)
 	if err != nil {
 		return err
 	}

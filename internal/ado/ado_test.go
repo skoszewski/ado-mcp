@@ -14,7 +14,7 @@ import (
 
 func TestNewAuthorizerPAT(t *testing.T) {
 	env := map[string]string{"AZURE_DEVOPS_PAT": "secret", "AZURE_TENANT_ID": "t", "AZURE_CLIENT_ID": "c", "AZURE_CLIENT_SECRET": "s"}
-	authorizer, err := NewAuthorizer(func(name string) string { return env[name] })
+	authorizer, err := NewAuthorizer(AuthAuto, func(name string) string { return env[name] })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,15 +27,55 @@ func TestNewAuthorizerPAT(t *testing.T) {
 
 func TestNewAuthorizerSelection(t *testing.T) {
 	servicePrincipal := map[string]string{"AZURE_TENANT_ID": "00000000-0000-0000-0000-000000000000", "AZURE_CLIENT_ID": "c", "AZURE_CLIENT_SECRET": "s"}
-	authorizer, err := NewAuthorizer(func(name string) string { return servicePrincipal[name] })
+	authorizer, err := NewAuthorizer(AuthAuto, func(name string) string { return servicePrincipal[name] })
 	if err != nil || !strings.HasPrefix(authorizer.Method(), "service principal") {
 		t.Errorf("service principal: %v %v", authorizer, err)
 	}
 
 	partial := map[string]string{"AZURE_TENANT_ID": "t"}
-	authorizer, err = NewAuthorizer(func(name string) string { return partial[name] })
+	authorizer, err = NewAuthorizer(AuthAuto, func(name string) string { return partial[name] })
 	if err != nil || authorizer.Method() != "Azure CLI" {
 		t.Errorf("Azure CLI fallback: %v %v", authorizer, err)
+	}
+}
+
+func TestNewAuthorizerForced(t *testing.T) {
+	both := map[string]string{"AZURE_DEVOPS_PAT": "secret", "AZURE_TENANT_ID": "00000000-0000-0000-0000-000000000000", "AZURE_CLIENT_ID": "c", "AZURE_CLIENT_SECRET": "s"}
+	getenv := func(name string) string { return both[name] }
+
+	authorizer, err := NewAuthorizer(AuthServicePrincipal, getenv)
+	if err != nil || !strings.HasPrefix(authorizer.Method(), "service principal") {
+		t.Errorf("forced service principal: %v %v", authorizer, err)
+	}
+	authorizer, err = NewAuthorizer(AuthAzureCLI, getenv)
+	if err != nil || authorizer.Method() != "Azure CLI" {
+		t.Errorf("forced Azure CLI: %v %v", authorizer, err)
+	}
+
+	empty := func(string) string { return "" }
+	for _, method := range []string{AuthPAT, AuthServicePrincipal, "bogus"} {
+		if _, err := NewAuthorizer(method, empty); err == nil {
+			t.Errorf("%s without settings: expected an error", method)
+		}
+	}
+
+	authorizer, err = NewAuthorizer(AuthNone, getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authorizer.Authorization(context.Background()); err == nil {
+		t.Error("none: Authorization without a header should fail")
+	}
+	client := &Client{HTTP: http.DefaultClient, Auth: authorizer}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer x" {
+			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Write([]byte(`{"value":[]}`))
+	}))
+	defer server.Close()
+	if _, _, err := client.ProjectsPage(WithAuthorization(context.Background(), "Bearer x"), server.URL+"/org", 1, ""); err != nil {
+		t.Errorf("none with a header: %v", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package ado
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -26,26 +27,66 @@ type Authorizer interface {
 	Method() string
 }
 
-// NewAuthorizer selects the authentication method from the environment read through getenv:
-// AZURE_DEVOPS_PAT when set, otherwise the service principal client secret when
+// Authentication method names accepted by NewAuthorizer.
+const (
+	AuthAuto             = "auto"
+	AuthPAT              = "pat"
+	AuthServicePrincipal = "service-principal"
+	AuthAzureCLI         = "azure-cli"
+	AuthNone             = "none"
+)
+
+// NewAuthorizer returns the Authorizer for method, reading its settings through getenv.
+//
+// AuthAuto picks AZURE_DEVOPS_PAT when set, otherwise the service principal client secret when
 // AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET are all set, otherwise the signed-in
-// Azure CLI.
-func NewAuthorizer(getenv func(string) string) (Authorizer, error) {
-	if pat := getenv("AZURE_DEVOPS_PAT"); pat != "" {
-		return patAuthorizer{header: "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))}, nil
-	}
-
+// Azure CLI. AuthPAT, AuthServicePrincipal and AuthAzureCLI force one method and fail when its
+// settings are missing. AuthNone configures no credential, so every request needs one from
+// WithAuthorization.
+func NewAuthorizer(method string, getenv func(string) string) (Authorizer, error) {
+	pat := getenv("AZURE_DEVOPS_PAT")
 	tenantID, clientID, clientSecret := getenv("AZURE_TENANT_ID"), getenv("AZURE_CLIENT_ID"), getenv("AZURE_CLIENT_SECRET")
-	if tenantID != "" && clientID != "" && clientSecret != "" {
-		credential, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
-		if err != nil {
-			return nil, fmt.Errorf("could not create the service principal credential: %w", err)
-		}
-		method := fmt.Sprintf("service principal client secret (client %s, tenant %s)", clientID, tenantID)
-		return &tokenAuthorizer{method: method, credential: credential}, nil
-	}
+	servicePrincipalSet := tenantID != "" && clientID != "" && clientSecret != ""
 
-	return NewAzureCLIAuthorizer()
+	switch method {
+	case AuthAuto:
+		switch {
+		case pat != "":
+			return newPATAuthorizer(pat), nil
+		case servicePrincipalSet:
+			return newServicePrincipalAuthorizer(tenantID, clientID, clientSecret)
+		}
+		return NewAzureCLIAuthorizer()
+	case AuthPAT:
+		if pat == "" {
+			return nil, errors.New("--auth pat needs AZURE_DEVOPS_PAT")
+		}
+		return newPATAuthorizer(pat), nil
+	case AuthServicePrincipal:
+		if !servicePrincipalSet {
+			return nil, errors.New("--auth service-principal needs AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET")
+		}
+		return newServicePrincipalAuthorizer(tenantID, clientID, clientSecret)
+	case AuthAzureCLI:
+		return NewAzureCLIAuthorizer()
+	case AuthNone:
+		return noneAuthorizer{}, nil
+	}
+	return nil, fmt.Errorf("unknown authentication method %q; use %s, %s, %s, %s or %s",
+		method, AuthAuto, AuthPAT, AuthServicePrincipal, AuthAzureCLI, AuthNone)
+}
+
+func newPATAuthorizer(pat string) Authorizer {
+	return patAuthorizer{header: "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))}
+}
+
+func newServicePrincipalAuthorizer(tenantID, clientID, clientSecret string) (Authorizer, error) {
+	credential, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not create the service principal credential: %w", err)
+	}
+	method := fmt.Sprintf("service principal client secret (client %s, tenant %s)", clientID, tenantID)
+	return &tokenAuthorizer{method: method, credential: credential}, nil
 }
 
 // NewAzureCLIAuthorizer returns an Authorizer for the identity signed in to the Azure CLI.
@@ -55,6 +96,17 @@ func NewAzureCLIAuthorizer() (Authorizer, error) {
 		return nil, fmt.Errorf("could not create the Azure CLI credential: %w", err)
 	}
 	return &tokenAuthorizer{method: "Azure CLI", credential: credential}, nil
+}
+
+// noneAuthorizer holds no credential; a request succeeds only with one from WithAuthorization.
+type noneAuthorizer struct{}
+
+func (noneAuthorizer) Authorization(context.Context) (string, error) {
+	return "", errors.New("no credential: the server is configured with --auth none, so the MCP client must send an Authorization header")
+}
+
+func (noneAuthorizer) Method() string {
+	return "none (the MCP client sends an Authorization header)"
 }
 
 // patAuthorizer authenticates with a personal access token as HTTP Basic credentials with an
