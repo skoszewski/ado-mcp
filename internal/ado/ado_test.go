@@ -71,6 +71,24 @@ func TestGetPageAndErrors(t *testing.T) {
 	}
 }
 
+func TestRequestAuthorizationOverride(t *testing.T) {
+	var received string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = r.Header.Get("Authorization")
+		w.Write([]byte(`{"value":[]}`))
+	}))
+	defer server.Close()
+
+	client := &Client{HTTP: server.Client(), Auth: patAuthorizer{header: "Basic test"}}
+	if _, _, err := client.ProjectsPage(context.Background(), server.URL+"/org", 1, ""); err != nil || received != "Basic test" {
+		t.Errorf("configured: Authorization = %q, error %v", received, err)
+	}
+	ctx := WithAuthorization(context.Background(), "Bearer override")
+	if _, _, err := client.ProjectsPage(ctx, server.URL+"/org", 1, ""); err != nil || received != "Bearer override" {
+		t.Errorf("override: Authorization = %q, error %v", received, err)
+	}
+}
+
 func TestRequestErrorCode(t *testing.T) {
 	cases := map[string]string{
 		"TF401175:The version descriptor <Branch: main > could not be resolved": "TF401175",

@@ -43,6 +43,31 @@ The method in use is logged at startup. A personal access token needs these scop
 A service principal or Azure CLI identity needs read access to the same areas in the
 organization.
 
+### Credentials sent by the MCP client
+
+Over the HTTP transport, an `Authorization` header on the MCP request replaces the configured
+method for that request. The server forwards the value unchanged to Azure DevOps, so it takes
+one of the two forms Azure DevOps accepts:
+
+- `Basic <value>` for a personal access token, where `<value>` is the Base64 encoding of the
+  token preceded by a colon: `printf ':%s' "$AZURE_DEVOPS_PAT" | base64`.
+- `Bearer <token>` for a Microsoft Entra access token issued for Azure DevOps.
+
+A client without the header, and every client on stdio, uses the configured method. For
+example, in a Claude Code configuration:
+
+```json
+{
+  "mcpServers": {
+    "azure-devops": {
+      "type": "http",
+      "url": "http://127.0.0.1:8888/mcp",
+      "headers": { "Authorization": "Basic <value>" }
+    }
+  }
+}
+```
+
 ### Creating a personal access token
 
 `create-pat` creates a personal access token for the user signed in to the Azure CLI through the

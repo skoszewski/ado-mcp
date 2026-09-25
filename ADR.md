@@ -128,3 +128,15 @@ container runtime, a service manager or an MCP client on the stdio transport col
 needs timestamps and levels. A character-device check is not enough to detect a terminal:
 `/dev/null` is a character device. The flag covers cases detection gets wrong, such as a
 terminal multiplexer or a log collector attached to a pseudo-terminal.
+
+## ADR-014: Authorization header of the MCP request overrides the configured method
+
+**Decision:** When the HTTP request carrying a tool call has an `Authorization` header, the
+server sends its value unchanged as the `Authorization` header of that call's Azure DevOps
+requests, in place of the method selected from the environment. The header is not logged.
+
+**Reason:** Different organizations and users need different credentials, while the configured
+method gives every client the server's single identity. The standard header name is one that
+MCP clients can set, and Zed starts an OAuth flow for a remote server unless it is configured.
+Forwarding the value unchanged supports both forms Azure DevOps accepts, `Basic` for a personal
+access token and `Bearer` for a Microsoft Entra token, without the server parsing credentials.

@@ -67,6 +67,21 @@ func (e *RequestError) Error() string {
 	return fmt.Sprintf("request to %s failed: %s: %s", e.URL, e.Status, e.Message)
 }
 
+type authorizationKey struct{}
+
+// WithAuthorization returns a context whose requests send value as their Authorization header
+// instead of the one the client's Authorizer supplies.
+func WithAuthorization(ctx context.Context, value string) context.Context {
+	return context.WithValue(ctx, authorizationKey{}, value)
+}
+
+// RequestAuthorization returns the Authorization header value WithAuthorization stored in ctx,
+// or "".
+func RequestAuthorization(ctx context.Context) string {
+	value, _ := ctx.Value(authorizationKey{}).(string)
+	return value
+}
+
 // NormalizeOrgURL returns an organization name or URL as its full https://dev.azure.com/<org>
 // URL, or "" when org is empty.
 func NormalizeOrgURL(org string) string {
@@ -112,9 +127,12 @@ func (c *Client) do(ctx context.Context, method, requestURL string, body any, au
 		request.Header.Set("Content-Type", "application/json")
 	}
 	if authorize {
-		authorization, err := c.Auth.Authorization(ctx)
-		if err != nil {
-			return nil, nil, err
+		authorization := RequestAuthorization(ctx)
+		if authorization == "" {
+			authorization, err = c.Auth.Authorization(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		request.Header.Set("Authorization", authorization)
 	}

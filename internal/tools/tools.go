@@ -71,9 +71,10 @@ func Register(server *mcp.Server, client *ado.Client, maxLogLines int, optimizat
 
 // addTool registers handler as the tool name. The input schema is inferred from In, with the
 // given property defaults, which the SDK fills into the arguments before they are decoded, and
-// with a pipeline property accepting a name or a numeric ID. Every call is logged at debug
-// level, and a handler error reaches the caller as a tool error result, with an Azure DevOps
-// refusal rewritten into guidance for the model.
+// with a pipeline property accepting a name or a numeric ID. An Authorization header on the
+// HTTP request carrying the call replaces the configured credential for that call. Every call
+// is logged at debug level, and a handler error reaches the caller as a tool error result, with
+// an Azure DevOps refusal rewritten into guidance for the model.
 func addTool[In, Out any](h *handlers, server *mcp.Server, name, description string, defaults map[string]any, handler func(context.Context, In) (Out, error)) string {
 	schema, err := jsonschema.For[In](nil)
 	if err != nil {
@@ -94,10 +95,15 @@ func addTool[In, Out any](h *handlers, server *mcp.Server, name, description str
 	mcp.AddTool(server, &mcp.Tool{Name: name, Description: description, InputSchema: schema},
 		func(ctx context.Context, request *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
 			slog.Debug("tool call", "tool", name, "arguments", string(request.Params.Arguments))
+			if request.Extra != nil {
+				if authorization := request.Extra.Header.Get("Authorization"); authorization != "" {
+					ctx = ado.WithAuthorization(ctx, authorization)
+				}
+			}
 			output, err := handler(ctx, input)
 			if err != nil {
 				slog.Debug("tool failed", "tool", name, "error", err)
-				err = h.explainError(err)
+				err = h.explainError(ctx, err)
 			}
 			return nil, output, err
 		})
@@ -106,10 +112,14 @@ func addTool[In, Out any](h *handlers, server *mcp.Server, name, description str
 
 // explainError rewrites an Azure DevOps refusal or not-found answer into a message telling the
 // model the request is out of reach for the authenticated identity.
-func (h *handlers) explainError(err error) error {
+func (h *handlers) explainError(ctx context.Context, err error) error {
 	var requestError *ado.RequestError
 	if !errors.As(err, &requestError) {
 		return err
+	}
+	method := h.client.Auth.Method()
+	if ado.RequestAuthorization(ctx) != "" {
+		method = "the credential in the MCP request's Authorization header"
 	}
 	switch {
 	case requestError.Code() == ado.CodeRefNotFound:
@@ -117,9 +127,9 @@ func (h *handlers) explainError(err error) error {
 	case requestError.Code() == ado.CodePathNotFound:
 		return fmt.Errorf(pathNotFoundMessage, requestError)
 	case requestError.Unauthorized():
-		return fmt.Errorf(accessDeniedMessage, h.client.Auth.Method(), requestError)
+		return fmt.Errorf(accessDeniedMessage, method, requestError)
 	case requestError.NotFound():
-		return fmt.Errorf(notFoundMessage, requestError, h.client.Auth.Method())
+		return fmt.Errorf(notFoundMessage, requestError, method)
 	default:
 		return err
 	}
