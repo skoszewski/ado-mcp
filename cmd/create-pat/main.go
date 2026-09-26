@@ -20,15 +20,17 @@ import (
 const usageText = `Usage: create-pat --organization <org> [flags]
 
 Create an Azure DevOps personal access token for the user signed in to the Azure CLI, and show
-it with its scope, expiry and authorization ID. The token is read-only, with the Project and
-Team, Build and Code read scopes ado-mcp needs, unless --full-scope is given.
+it with its scope, expiry and authorization ID. The token has the scopes ado-mcp needs, unless
+--full-scope is given: read access to projects, builds, code, service connections, variable
+groups and agent pools, and read and manage access to environments, which also grants managing
+agent pools, queues and agents.
 
 Flags:
   -O, --organization <org>  Azure DevOps organization name or https://dev.azure.com/<org> URL;
                             required
       --name <name>         display name of the token (default: ado-mcp)
       --days <n>            number of days the token is valid for (default: 30)
-      --full-scope          grant full access instead of the read-only scopes
+      --full-scope          grant full access instead of the scopes ado-mcp needs
       --bare                print only the token on stdout, for use in scripts
   -h, --help                show this help
 
@@ -87,7 +89,7 @@ func run(opts options) error {
 	}
 	client := &ado.Client{HTTP: &http.Client{Timeout: time.Minute}, Auth: authorizer}
 
-	scope := ado.ReadOnlyScopes
+	scope := ado.ToolScopes
 	if opts.fullScope {
 		scope = ado.FullScope
 	}

@@ -129,6 +129,116 @@ func TestRequestAuthorizationOverride(t *testing.T) {
 	}
 }
 
+func TestDiagnosisRequests(t *testing.T) {
+	var method, path, query string
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path, query, body = r.Method, r.URL.Path, r.URL.RawQuery, nil
+		if r.Body != nil {
+			json.NewDecoder(r.Body).Decode(&body)
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/preview"):
+			w.Write([]byte(`{"finalYaml":"stages:\n- stage: plan"}`))
+		case strings.HasSuffix(r.URL.Path, "/pullrequestquery"):
+			w.Write([]byte(`{"results":[{"c1":[{"pullRequestId":7}]},{"c1":[{"pullRequestId":7},{"pullRequestId":8}]}]}`))
+		case strings.HasSuffix(r.URL.Path, "/codesearchresults"):
+			w.Write([]byte(`{"count":1,"infoCode":0,"results":[{"path":"/main.tf","matches":{"content":[{"charOffset":1,"length":2}]}}]}`))
+		case strings.HasSuffix(r.URL.Path, "/diffs/commits"):
+			w.Write([]byte(`{"baseCommit":"a","targetCommit":"b","changes":[{"changeType":"edit","item":{"path":"/main.tf","objectId":"o2","originalObjectId":"o1"}}]}`))
+		case strings.HasPrefix(r.URL.Path, "/org/_apis/projects/"):
+			w.Write([]byte(`{"id":"p-id","name":"P"}`))
+		default:
+			w.Write([]byte(`{"value":[]}`))
+		}
+	}))
+	defer server.Close()
+	defer func(original string) { searchURL = original }(searchURL)
+	searchURL = server.URL
+
+	ctx := context.Background()
+	org := server.URL + "/org"
+	client := &Client{HTTP: server.Client(), Auth: patAuthorizer{header: "Basic test"}}
+	check := func(name, wantMethod, wantPath string, wantQuery ...string) {
+		t.Helper()
+		if method != wantMethod || path != wantPath {
+			t.Errorf("%s: request = %s %s", name, method, path)
+		}
+		for _, want := range wantQuery {
+			if !strings.Contains(query, want) {
+				t.Errorf("%s: query %q lacks %q", name, query, want)
+			}
+		}
+	}
+
+	client.RunChangesPage(ctx, org, "P", 5, 10, "c")
+	check("RunChangesPage", "GET", "/org/P/_apis/build/builds/5/changes", "$top=10", "continuationToken=c")
+	client.ChangesBetweenRuns(ctx, org, "P", 3, 5, 0)
+	check("ChangesBetweenRuns", "GET", "/org/P/_apis/build/changes", "fromBuildId=3", "toBuildId=5")
+	client.RunArtifacts(ctx, org, "P", 5)
+	check("RunArtifacts", "GET", "/org/P/_apis/build/builds/5/artifacts")
+
+	yaml, err := client.PipelineYAML(ctx, org, "P", 9, "refs/heads/main")
+	check("PipelineYAML", "POST", "/org/P/_apis/pipelines/9/preview")
+	ref, _ := body["resources"].(map[string]any)["repositories"].(map[string]any)["self"].(map[string]any)["refName"]
+	if err != nil || yaml != "stages:\n- stage: plan" || body["previewRun"] != true || ref != "refs/heads/main" {
+		t.Errorf("PipelineYAML = %q, %v; body %v", yaml, err, body)
+	}
+
+	diffs, err := client.Diff(ctx, org, "P", "infra", ItemVersion{Ref: "a", RefType: "commit"}, ItemVersion{Ref: "main", RefType: "branch"}, 0, 0)
+	check("Diff", "GET", "/org/P/_apis/git/repositories/infra/diffs/commits",
+		"baseVersion=a", "baseVersionType=commit", "targetVersion=main", "targetVersionType=branch", "diffCommonCommit=false")
+	if err != nil || len(diffs.Changes) != 1 || *diffs.Changes[0].Item.OriginalObjectID != "o1" {
+		t.Errorf("Diff = %+v, %v", diffs, err)
+	}
+
+	client.RefsPage(ctx, org, "P", "infra", "tags/", "v1", 0, "")
+	check("RefsPage", "GET", "/org/P/_apis/git/repositories/infra/refs", "filter=tags%2F", "filterContains=v1", "peelTags=true")
+	client.PullRequests(ctx, org, "P", "infra", PullRequestQuery{Status: "completed", TargetRefName: "refs/heads/main", Top: 5})
+	check("PullRequests", "GET", "/org/P/_apis/git/repositories/infra/pullrequests",
+		"searchCriteria.status=completed", "searchCriteria.targetRefName=refs%2Fheads%2Fmain", "$top=5")
+
+	pullRequests, err := client.PullRequestsByCommit(ctx, org, "P", "infra", "c1")
+	check("PullRequestsByCommit", "POST", "/org/P/_apis/git/repositories/infra/pullrequestquery")
+	if err != nil || len(pullRequests) != 2 || pullRequests[0].PullRequestID != 7 || len(body["queries"].([]any)) != 2 {
+		t.Errorf("PullRequestsByCommit = %+v, %v; body %v", pullRequests, err, body)
+	}
+
+	client.PullRequestThreads(ctx, org, "P", "infra", 7)
+	check("PullRequestThreads", "GET", "/org/P/_apis/git/repositories/infra/pullRequests/7/threads")
+	projectID, err := client.ProjectID(ctx, org, "P")
+	check("ProjectID", "GET", "/org/_apis/projects/P")
+	if err != nil || projectID != "p-id" {
+		t.Errorf("ProjectID = %q, %v", projectID, err)
+	}
+	client.PolicyEvaluations(ctx, org, "p-id", 7)
+	check("PolicyEvaluations", "GET", "/org/p-id/_apis/policy/evaluations",
+		"artifactId=vstfs%3A%2F%2F%2FCodeReview%2FCodeReviewId%2Fp-id%2F7", "api-version=7.1-preview.1")
+
+	client.ServiceEndpoints(ctx, org, "P", "azurerm")
+	check("ServiceEndpoints", "GET", "/org/P/_apis/serviceendpoint/endpoints", "type=azurerm")
+	client.ServiceEndpointHistoryPage(ctx, org, "P", "e1", 25, "c")
+	check("ServiceEndpointHistoryPage", "GET", "/org/P/_apis/serviceendpoint/e1/executionhistory", "top=25", "continuationToken=c")
+	client.VariableGroupsPage(ctx, org, "P", "tf-*", 0, "")
+	check("VariableGroupsPage", "GET", "/org/P/_apis/distributedtask/variablegroups", "groupName=tf-%2A")
+	client.EnvironmentsPage(ctx, org, "P", "prod", 0, "")
+	check("EnvironmentsPage", "GET", "/org/P/_apis/distributedtask/environments", "name=prod")
+	client.EnvironmentDeploymentsPage(ctx, org, "P", 4, 25, "")
+	check("EnvironmentDeploymentsPage", "GET", "/org/P/_apis/distributedtask/environments/4/environmentdeploymentrecords", "top=25")
+	client.AgentPools(ctx, org, "Default")
+	check("AgentPools", "GET", "/org/_apis/distributedtask/pools", "poolName=Default")
+	client.Agents(ctx, org, 1, "agent-1", true)
+	check("Agents", "GET", "/org/_apis/distributedtask/pools/1/agents",
+		"agentName=agent-1", "includeCapabilities=true", "includeLastCompletedRequest=true")
+
+	result, err := client.SearchCode(ctx, "https://dev.azure.com/org", "P", CodeSearchQuery{Text: "backend", Repository: "infra", Top: 25})
+	check("SearchCode", "POST", "/org/P/_apis/search/codesearchresults")
+	filters, _ := body["filters"].(map[string]any)
+	if err != nil || result.Count != 1 || body["searchText"] != "backend" || filters["Repository"] == nil || filters["Path"] != nil {
+		t.Errorf("SearchCode = %+v, %v; body %v", result, err, body)
+	}
+}
+
 func TestRequestErrorCode(t *testing.T) {
 	cases := map[string]string{
 		"TF401175:The version descriptor <Branch: main > could not be resolved": "TF401175",
@@ -168,11 +278,11 @@ func TestCreatePAT(t *testing.T) {
 
 	client := &Client{HTTP: server.Client(), Auth: patAuthorizer{header: "Bearer test"}}
 	validTo := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
-	pat, err := client.CreatePAT(context.Background(), "https://dev.azure.com/myorg", PATRequest{DisplayName: "ado-mcp", Scope: ReadOnlyScopes, ValidTo: validTo})
+	pat, err := client.CreatePAT(context.Background(), "https://dev.azure.com/myorg", PATRequest{DisplayName: "ado-mcp", Scope: ToolScopes, ValidTo: validTo})
 	if err != nil || pat.Token != "secret" || pat.AuthorizationID != "a1" {
 		t.Errorf("CreatePAT = %+v, %v", pat, err)
 	}
-	if received.DisplayName != "ado-mcp" || received.Scope != ReadOnlyScopes || !received.ValidTo.Equal(validTo) || received.AllOrgs {
+	if received.DisplayName != "ado-mcp" || received.Scope != ToolScopes || !received.ValidTo.Equal(validTo) || received.AllOrgs {
 		t.Errorf("request body = %+v", received)
 	}
 

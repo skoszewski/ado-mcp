@@ -11,8 +11,9 @@ import (
 
 // PAT scopes CreatePAT accepts.
 const (
-	// ReadOnlyScopes are the read scopes the MCP tools need: projects, builds and code.
-	ReadOnlyScopes = "vso.project vso.build vso.code"
+	// ToolScopes are the scopes the MCP tools need: projects, builds, code, service connections,
+	// variable groups and agent pools to read, and environments, which have no read-only scope.
+	ToolScopes = "vso.project vso.build vso.code vso.serviceendpoint vso.variablegroups_read vso.agentpools vso.environment_manage"
 	// FullScope grants full access to every Azure DevOps resource the user can reach.
 	FullScope = "app_token"
 )

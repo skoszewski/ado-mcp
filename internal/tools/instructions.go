@@ -50,7 +50,16 @@ ado_get_run already names the repository a run built as repository_name and the 
 as source_version, so passing that source_version as ref with ref_type="commit" reads the file
 as that run saw it rather than as it stands now. For when a change landed and who made it, use
 ado_list_commits with item_path set to the one file, then ado_get_commit_changes on a commit it
-reports. ado_list_commits pages on next_skip rather than on a cursor.`
+reports. ado_list_commits pages on next_skip rather than on a cursor.
+
+To find what changed before a failure, find the last successful run of the same pipeline with
+ado_list_runs, then ado_list_run_changes with that run as from_run_id for the commits in
+between, ado_get_diff between the two runs' source_version commits for the files, and
+ado_find_pull_requests with a commit for the pull request that brought it in. A failure that
+depends on configuration outside the repository is examined with ado_get_pipeline_yaml for the
+expanded templates, ado_list_service_connections and ado_list_variable_groups for what the
+stage authenticated with and was given, ado_list_environment_deployments for what else deployed
+to the same environment, and ado_list_agents for the agent that ran the job.`
 
 const instructionsScope = `This server remembers nothing between calls, so every call carries the organization and
 project it applies to. Keeping track

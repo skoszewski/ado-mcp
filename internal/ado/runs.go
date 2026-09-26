@@ -67,6 +67,28 @@ type RunLog struct {
 	} `json:"signedContent"`
 }
 
+// Change is a commit associated with a run.
+type Change struct {
+	ID               *string      `json:"id"`
+	Type             *string      `json:"type"`
+	Message          *string      `json:"message"`
+	MessageTruncated bool         `json:"messageTruncated"`
+	Author           *IdentityRef `json:"author"`
+	Pusher           *string      `json:"pusher"`
+	Timestamp        *string      `json:"timestamp"`
+}
+
+// BuildArtifact is an artifact a run published.
+type BuildArtifact struct {
+	ID       int     `json:"id"`
+	Name     string  `json:"name"`
+	Source   *string `json:"source"`
+	Resource *struct {
+		Type       *string        `json:"type"`
+		Properties map[string]any `json:"properties"`
+	} `json:"resource"`
+}
+
 // BuildQuery selects the runs BuildsPage returns. Empty fields do not filter.
 type BuildQuery struct {
 	PipelineID int
@@ -104,6 +126,31 @@ func (c *Client) Build(ctx context.Context, orgURL, project string, runID int) (
 	buildURL := fmt.Sprintf("%s/_apis/build/builds/%d?api-version=%s", projectURL(orgURL, project), runID, APIVersion)
 	err := c.getJSON(ctx, buildURL, &build)
 	return build, err
+}
+
+// RunChangesPage fetches one page of the commits a run built, returning the continuation token
+// for the next page, or "" on the last one.
+func (c *Client) RunChangesPage(ctx context.Context, orgURL, project string, runID, top int, cursor string) ([]Change, string, error) {
+	query := pageQuery(url.Values{"api-version": {APIVersion}}, top, cursor)
+	return getPage[Change](ctx, c, fmt.Sprintf("%s/_apis/build/builds/%d/changes?%s", projectURL(orgURL, project), runID, encodeQuery(query)))
+}
+
+// ChangesBetweenRuns fetches the commits made to the repository between two runs. A top of 0
+// uses the API's own limit.
+func (c *Client) ChangesBetweenRuns(ctx context.Context, orgURL, project string, fromRunID, toRunID, top int) ([]Change, error) {
+	query := url.Values{
+		"fromBuildId": {strconv.Itoa(fromRunID)}, "toBuildId": {strconv.Itoa(toRunID)}, "api-version": {APIVersion},
+	}
+	if top > 0 {
+		query.Set("$top", strconv.Itoa(top))
+	}
+	return getValues[Change](ctx, c, projectURL(orgURL, project)+"/_apis/build/changes?"+encodeQuery(query))
+}
+
+// RunArtifacts fetches the artifacts a run published.
+func (c *Client) RunArtifacts(ctx context.Context, orgURL, project string, runID int) ([]BuildArtifact, error) {
+	artifactsURL := fmt.Sprintf("%s/_apis/build/builds/%d/artifacts?api-version=%s", projectURL(orgURL, project), runID, APIVersion)
+	return getValues[BuildArtifact](ctx, c, artifactsURL)
 }
 
 // Timeline fetches the stage, job and step records of a run.

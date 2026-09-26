@@ -22,6 +22,22 @@ binary or as a container, over Streamable HTTP or stdio.
 | `ado_list_repository_items` | Files and folders under a path |
 | `ado_list_commits` | Commits, optionally touching one path, paged by skip |
 | `ado_get_commit_changes` | Paths one commit changed |
+| `ado_list_run_changes` | Commits a run built, or every commit between two runs |
+| `ado_get_diff` | Files that differ between two commits, branches or tags |
+| `ado_get_pipeline_yaml` | One page of a pipeline's YAML with its templates expanded |
+| `ado_list_run_artifacts` | Artifacts a run published |
+| `ado_list_service_connections` | Service connections with their type and authentication scheme |
+| `ado_list_service_connection_history` | Runs that used one service connection, newest first |
+| `ado_list_variable_groups` | Variable groups with their variables; secret values are not returned |
+| `ado_list_environments` | Deployment environments and their resources |
+| `ado_list_environment_deployments` | Deployments to one environment, newest first |
+| `ado_find_pull_requests` | Pull requests that merged a commit, or by status and branch |
+| `ado_list_pull_request_threads` | Comment threads of a pull request |
+| `ado_list_policy_evaluations` | Branch policy results on a pull request |
+| `ado_list_agent_pools` | Agent pools in an organization |
+| `ado_list_agents` | Agents of a pool with their current and last job, optionally their capabilities |
+| `ado_list_refs` | Branches and tags with the commit each points to |
+| `ado_search_code` | Files containing a text, across repositories; needs the Code Search extension |
 
 ## Authentication
 
@@ -41,12 +57,20 @@ MCP client, described below.
 
 The method in use is logged at startup. A personal access token needs these scopes:
 
-- Project and Team: Read
-- Build: Read
-- Code: Read
+- `vso.project` - Project and Team: Read
+- `vso.build` - Build: Read
+- `vso.code` - Code: Read
+- `vso.serviceendpoint` - Service endpoints (read)
+- `vso.variablegroups_read` - Variable groups (read)
+- `vso.agentpools` - Agent pools (read)
+- `vso.environment_manage` - Environment (read and manage), the only scope the environment
+  APIs accept. Microsoft marks it high privilege: it also grants managing agent pools, queues
+  and agents. Leave it out when `ado_list_environments` and `ado_list_environment_deployments`
+  are not needed.
 
-A service principal or Azure CLI identity needs read access to the same areas in the
-organization.
+A tool whose scope the token lacks answers that Azure DevOps refused the request; the other
+tools keep working. A service principal or Azure CLI identity needs read access to the same
+areas in the organization.
 
 ### Credentials sent by the MCP client
 
@@ -91,7 +115,7 @@ export AZURE_DEVOPS_PAT="$(create-pat -O myorg --bare)"
 | `--organization`, `-O` | | Organization name or `https://dev.azure.com/<org>` URL; required |
 | `--name` | `ado-mcp` | Display name of the token |
 | `--days` | `30` | Number of days the token is valid for |
-| `--full-scope` | | Grant full access instead of the read-only scopes above |
+| `--full-scope` | | Grant full access instead of the scopes above |
 | `--bare` | | Print only the token on stdout, for use in scripts |
 
 The API accepts only a user identity, not a service principal. Organization policies can

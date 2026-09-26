@@ -3,6 +3,7 @@ package ado
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -83,6 +84,33 @@ func (c *Client) Definition(ctx context.Context, orgURL, project string, id int)
 	definitionURL := fmt.Sprintf("%s/_apis/build/definitions/%d?api-version=%s", projectURL(orgURL, project), id, APIVersion)
 	err := c.getJSON(ctx, definitionURL, &definition)
 	return definition, err
+}
+
+// PipelineYAML returns a pipeline's final YAML with its templates expanded, through a preview
+// run that queues nothing. A non-empty ref, such as "refs/heads/main", previews the YAML on that
+// branch or tag of the pipeline's own repository.
+func (c *Client) PipelineYAML(ctx context.Context, orgURL, project string, pipelineID int, ref string) (string, error) {
+	body := map[string]any{"previewRun": true}
+	if ref != "" {
+		body["resources"] = map[string]any{"repositories": map[string]any{"self": map[string]string{"refName": ref}}}
+	}
+	previewURL := fmt.Sprintf("%s/_apis/pipelines/%d/preview?api-version=%s", projectURL(orgURL, project), pipelineID, APIVersion)
+	response, _, err := c.do(ctx, http.MethodPost, previewURL, body, true)
+	if err != nil {
+		return "", err
+	}
+	var preview struct {
+		FinalYAML string `json:"finalYaml"`
+	}
+	err = decodeJSON(previewURL, response, &preview)
+	return preview.FinalYAML, err
+}
+
+// ProjectID returns the ID of a project given by name or ID.
+func (c *Client) ProjectID(ctx context.Context, orgURL, project string) (string, error) {
+	var result Project
+	err := c.getJSON(ctx, orgURL+"/_apis/projects/"+url.PathEscape(project)+"?api-version="+APIVersion, &result)
+	return result.ID, err
 }
 
 // ResolvePipeline resolves a pipeline name or numeric ID to its ID and name. A name that does

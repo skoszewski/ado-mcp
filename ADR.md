@@ -145,3 +145,24 @@ method gives every client the server's single identity. The standard header name
 MCP clients can set, and Zed starts an OAuth flow for a remote server unless it is configured.
 Forwarding the value unchanged supports both forms Azure DevOps accepts, `Basic` for a personal
 access token and `Bearer` for a Microsoft Entra token, without the server parsing credentials.
+
+## ADR-015: Tools for diagnosing Terraform deployment runs
+
+**Decision:** The server adds tools for what a failed Terraform run's logs refer to but do not
+contain: the commits between runs, the files that changed, the expanded pipeline YAML, service
+connections, variable groups, environments and their deployments, run artifacts, pull requests
+with their threads and policy evaluations, agent pools and agents, refs, and code search.
+`ado_get_diff` reports changed paths only. Approvals and checks, agent job requests, work
+items, classic release pipelines and test results have no tools.
+
+**Reason:** The organizations served deploy Terraform with YAML pipelines and use neither work
+items, classic pipelines nor Azure DevOps test management. The diffs API returns paths and
+object IDs, not line differences, and the model can read both versions of a file with
+`ado_get_repository_item`. The approvals API cannot be queried by run and check evaluations need
+a check suite ID the documentation does not say how to obtain; the documented job request API
+covers agent clouds only.
+
+**Consequence:** The environment APIs accept only the `vso.environment_manage` scope, a
+high-privilege scope that also manages agent pools, queues and agents, so the token
+`create-pat` creates can manage them. A token without a tool's scope gets the
+access-denied guidance of ADR-011 for that tool alone.
